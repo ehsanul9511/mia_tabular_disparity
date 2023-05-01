@@ -1,6 +1,7 @@
 # import utils
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.preprocessing import OneHotEncoder
 import requests
 import pandas as pd
 import os
@@ -17,23 +18,92 @@ SUPPORTED_RATIOS = ["0.0", "0.1", "0.2", "0.3",
 
 # US Income dataset
 class CensusIncome:
-    def __init__(self, path=BASE_DATA_DIR):
-        self.urls = [
-            "http://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
-            "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.names",
-            "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.test"
-        ]
-        self.columns = [
-            "age", "workClass", "fnlwgt", "education", "education-num",
-            "marital-status", "occupation", "relationship",
-            "race", "sex", "capital-gain", "capital-loss",
-            "hours-per-week", "native-country", "income"
-        ]
-        self.dropped_cols = ["education", "native-country"]
+    def __init__(self, name="Adult", path=BASE_DATA_DIR):
+        # self.urls = [
+        #     "http://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
+        #     "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.names",
+        #     "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.test"
+        # ]
+        # self.columns = [
+        #     "age", "workClass", "fnlwgt", "education", "education-num",
+        #     "marital-status", "occupation", "relationship",
+        #     "race", "sex", "capital-gain", "capital-loss",
+        #     "hours-per-week", "native-country", "income"
+        # ]
+        # self.dropped_cols = ["education", "native-country"]
         self.path = path
-        self.download_dataset()
+        self.name = name
+        if name == "Adult":
+            self.meta = {
+                "train_data_path": os.path.join(self.path, "Adult_35222.csv"),
+                "test_data_path": os.path.join(self.path, "Adult_10000.csv"),
+                # "all_columns": [
+                #     "age", "workClass", "fnlwgt", "education", "education-num",
+                #     "marital-status", "occupation", "relationship",
+                #     "race", "sex", "capital-gain", "capital-loss",
+                #     "hours-per-week", "native-country", "income"
+                # ],
+                "all_columns": ['work', 'fnlwgt', 'education', 'marital', 'occupation', 'sex',
+                                'capitalgain', 'capitalloss', 'hoursperweek', 'race', 'income'
+                                ],   
+                "cat_columns": ["work", "education", "marital", "occupation", "race", "sex"],
+                # "num_columns": ["age", "fnlwgt", "capitalgain", "capitalloss", "hoursperweek"],
+                "num_columns": {
+                    "zscaler": ["fnlwgt", "capitalgain", "capitalloss"],
+                    "minmaxscaler": ["hoursperweek"]
+                },
+                "y_column": "income",
+                "y_positive": ">50K",
+                "y_values": ['<=50K', '>50K'],
+                "sensitive_column": "marital",
+                "sensitive_values": ["Married", "Single"],
+                "sensitive_positive": "Married"
+            }
+        elif name == "GSS":
+            self.meta = {
+                "train_data_path": os.path.join(self.path, "GSS_15235.csv"),
+                "test_data_path": os.path.join(self.path, "GSS_5079.csv"),
+                "all_columns": ['year', 'marital', 'divorce', 'sex', 'race', 'relig', 'xmovie', 'pornlaw',
+                                'childs', 'age', 'educ', 'hapmar'],
+                "cat_columns": ['year', 'marital', 'divorce', 'sex', 'race', 'relig', 'xmovie', 'pornlaw'],
+                "num_columns": {
+                    "zscaler": [],
+                    "minmaxscaler": ['childs', 'age', 'educ']
+                },
+                "y_column": "hapmar",
+                "y_positive": "nottoohappy",
+                "y_values": ['nottoohappy', 'prettyhappy', 'veryhappy'],
+                "sensitive_column": "xmovie",
+                "sensitive_values": ["x_yes", "x_no"],
+                "sensitive_positive": "x_yes"
+            }
+        elif name == "NLSY":
+            self.meta = {
+                "train_data_path": os.path.join(self.path, "nlsy_5096.csv"),
+                "test_data_path": os.path.join(self.path, "nlsy_5096.csv"),
+                "all_columns": [],
+                "cat_columns": ['marital8', 'gender', 'race', 'arrestsdli8', 'drug_marijuana',
+                                'smoking8', 'drinking8', 'sexdrugsdli8', 'sexstrng8'],
+                "num_columns": {
+                    "zscaler": ['incarceration', 'income8'],
+                    "minmaxscaler": ['age','children']
+                },
+                "y_column": "ratelife8",
+                "y_positive": "excellent",
+                # "y_values": ['excellent', 'verygood', 'good', 'fair', 'poor'],
+                "sensitive_column": "drug_marijuana",
+                "sensitive_values": ["drug_marijuana_yes", "drug_marijuana_no"],
+                "sensitive_positive": "drug_marijuana_yes"
+            }
+
+        self.y_columns = [self.meta['y_column'] + "_" + val for val in self.meta['y_values']]
+
+        self.y_mapping_dict = {value: index for index, value in enumerate(self.meta["y_values"])}
+                
+        # self.download_dataset()
         # self.load_data(test_ratio=0.4)
         self.load_data(test_ratio=0.5)
+
 
     # Download dataset, if not present
     def download_dataset(self):
@@ -49,38 +119,147 @@ class CensusIncome:
                     file.write(data)
 
     # Process, handle one-hot conversion of data etc
+
+    def calculate_stats(self):
+        df = self.original_df.copy()
+        z_scale_cols = self.meta["num_columns"]["zscaler"]
+        self.mean_dict = {}
+        self.std_dict = {}
+        for c in z_scale_cols:
+            # z-score normalization
+            self.mean_dict[c] = df[c].mean()
+            self.std_dict[c] = df[c].std()
+
+        # Take note of columns to scale with min-max normalization
+        # minmax_scale_cols = ["age",  "hours-per-week", "education-num"]
+        minmax_scale_cols = self.meta["num_columns"]["minmaxscaler"]
+        self.min_dict = {}
+        self.max_dict = {}
+        for c in minmax_scale_cols:
+            self.min_dict[c] = df[c].min()
+            self.max_dict[c] = df[c].max()
+
+        self.unique_values_dict = {}
+        for c in self.meta["cat_columns"] + [self.meta["y_column"]]:
+            self.unique_values_dict[c] = df[c].unique().tolist()
+
+    def one_hot_y(self):
+        y = self.original_df[self.meta["y_column"]].apply((lambda x: self.y_mapping_dict[x])).to_numpy().reshape(-1, 1)
+        enc = OneHotEncoder()
+        enc.fit(y)
+        self.y_enc = enc
+
+        # return enc.transform(y).toarray(), enc
+
+    def one_hot_sensitive(self):
+        self.sensitive_mapping_dict = {
+            self.meta['sensitive_positive']: True
+        }
+        for v in self.meta['sensitive_values']:
+            if v != self.meta['sensitive_positive']:
+                self.sensitive_mapping_dict[v] = False
+        sensitive = self.original_df[self.meta["sensitive_column"]].apply((lambda x: self.sensitive_mapping_dict[x])).to_numpy().reshape(-1, 1)
+        enc = OneHotEncoder()
+        enc.fit(sensitive)
+        self.sensitive_enc = enc
+
+        # return enc.transform(sensitive).toarray(), enc
+
+
+    
     def process_df(self, df):
-        df['income'] = df['income'].apply(lambda x: 1 if '>50K' in x else 0)
+        # df['income'] = df['income'].apply(lambda x: 1 if '>50K' in x else 0)
+        # df[self.meta["y_column"]] = df[self.meta["y_column"]].apply((lambda x: 1 if self.meta["y_positive"] in x else 0))
+        df[self.meta["y_column"]] = df[self.meta["y_column"]].apply((lambda x: self.y_mapping_dict[x]))
 
         def oneHotCatVars(x, colname):
             df_1 = x.drop(columns=colname, axis=1)
-            df_2 = pd.get_dummies(x[colname], prefix=colname, prefix_sep=':')
+            df_2 = pd.get_dummies(x[colname], prefix=colname, prefix_sep='_')
             return (pd.concat([df_1, df_2], axis=1, join='inner'))
 
-        colnames = ['workClass', 'occupation', 'race', 'sex',
-                    'marital-status', 'relationship']
+        colnames = self.meta["cat_columns"]
         # Drop columns that do not help with task
-        df = df.drop(columns=self.dropped_cols, axis=1)
+        # df = df.drop(columns=self.dropped_cols, axis=1)
         # Club categories not directly relevant for property inference
-        df["race"] = df["race"].replace(
-            ['Asian-Pac-Islander', 'Amer-Indian-Eskimo'], 'Other')
+        # df["race"] = df["race"].replace(
+        #     ['Asian-Pac-Islander', 'Amer-Indian-Eskimo'], 'Other')
         for colname in colnames:
             df = oneHotCatVars(df, colname)
+
+        # Take note of columns to scale with Z-score
+        # z_scale_cols = ["fnlwgt", "capital-gain", "capital-loss"]
+        z_scale_cols = self.meta["num_columns"]["zscaler"]
+        for c in z_scale_cols:
+            # z-score normalization
+            # df[c] = (df[c] - df[c].mean()) / df[c].std()
+            df[c] = (df[c] - self.mean_dict[c]) / self.std_dict[c]
+
+        # Take note of columns to scale with min-max normalization
+        # minmax_scale_cols = ["age",  "hours-per-week", "education-num"]
+        minmax_scale_cols = self.meta["num_columns"]["minmaxscaler"]
+        for c in minmax_scale_cols:
+            # z-score normalization
+            # df[c] = (df[c] - df[c].min()) / df[c].max()?
+            df[c] = (df[c] - self.min_dict[c]) / self.max_dict[c]
         # Drop features pruned via feature engineering
-        prune_feature = [
-            "workClass:Never-worked",
-            "workClass:Without-pay",
-            "occupation:Priv-house-serv",
-            "occupation:Armed-Forces"
-        ]
-        df = df.drop(columns=prune_feature, axis=1)
+        # prune_feature = [
+        #     "workClass:Never-worked",
+        #     "workClass:Without-pay",
+        #     "occupation:Priv-house-serv",
+        #     "occupation:Armed-Forces"
+        # ]
+        # df = df.drop(columns=prune_feature, axis=1)
         return df
+    
+    def get_random_data(self, num):
+        orig_data = self.original_df.copy()
+        orig_columns = orig_data.columns
+        # unique_val_dict = {}
+        # for col in orig_columns:
+        #     unique_val_dict[col] = orig_data[col].unique()
+        #     if col not in self.meta['dummy_columns'] and col != self.meta['y_column']:
+        #         unique_val_dict[col] = [np.min(unique_val_dict[col]), np.max(unique_val_dict[col])]
+        # print(unique_val_dict)
+        x = {}
+        for col in orig_columns:
+            # if col in self.meta['dummy_columns'] or col == self.meta['y_column']:
+            if col in self.meta["cat_columns"] or col == self.meta["y_column"]:
+                # print()
+                np.random.seed(42)
+                # x[col] = np.random.choice(unique_val_dict[col].tolist(), num, replace=True)
+                x[col] = np.random.choice(self.unique_values_dict[col], num, replace=True)
+            elif col in self.meta["num_columns"]["minmaxscaler"]:
+                np.random.seed(42)
+                # print(unique_val_dict[col][0], unique_val_dict[col][1])
+                # x[col] = [random.randint(unique_val_dict[col][0], unique_val_dict[col][1])] * 2
+                # x[col] = np.random.randint(unique_val_dict[col][0], unique_val_dict[col][1], size=num)
+                x[col] = np.random.uniform(self.min_dict[col], self.max_dict[col], size=num)
+                # x[col] = 0
+            elif col in self.meta["num_columns"]["zscaler"]:
+                x[col] = np.random.normal(self.mean_dict[col], self.std_dict[col], size=num)
+
+        # x = pd.DataFrame([x], columns = orig_data.columns)
+        x = pd.DataFrame.from_dict(x)
+        # print(x)
+        # xp = x.copy()
+        # x = pd.get_dummies(x, columns=self.meta['dummy_columns'])
+        # x = pd.DataFrame(x, columns=one_hot_columns)
+        # x.fillna(0, inplace=True)
+        # numerical_features = self.meta['numeric_columns']
+        # x[numerical_features] = scaler.transform(x[numerical_features])
+
+        xp = x.copy()
+        xp = self.process_df(xp)
+
+        return x, xp
 
     # Return data with desired property ratios
     def get_x_y(self, P):
         # Scale X values
-        Y = P['income'].to_numpy()
-        X = P.drop(columns='income', axis=1)
+        # Y = P['income'].to_numpy()
+        Y = P[self.meta["y_column"]].to_numpy()
+        # X = P.drop(columns='income', axis=1)
+        X = P.drop(columns=self.meta["y_column"], axis=1)
         cols = X.columns
         X = X.to_numpy()
         return (X.astype(float), np.expand_dims(Y, 1), cols)
@@ -110,30 +289,30 @@ class CensusIncome:
     # Create adv/victim splits, normalize data, etc
     def load_data(self, test_ratio, random_state=42):
         # Load train, test data
-        train_data = pd.read_csv(os.path.join(self.path, 'adult.data'),
-                                 names=self.columns, sep=' *, *',
-                                 na_values='?', engine='python')
-        test_data = pd.read_csv(os.path.join(self.path, 'adult.test'),
-                                names=self.columns, sep=' *, *', skiprows=1,
-                                na_values='?', engine='python')
+        # train_data = pd.read_csv(os.path.join(self.path, 'adult.data'),
+        #                          names=self.columns, sep=' *, *',
+        #                          na_values='?', engine='python')
+        # test_data = pd.read_csv(os.path.join(self.path, 'adult.test'),
+        #                         names=self.columns, sep=' *, *', skiprows=1,
+        #                         na_values='?', engine='python')
+        train_data = pd.read_csv(self.meta["train_data_path"])
+        test_data = pd.read_csv(self.meta["test_data_path"])
 
         # Add field to identify train/test, process together
         train_data['is_train'] = 1
         test_data['is_train'] = 0
-        df = pd.concat([train_data, test_data], axis=0)
+        # concat train and test data and reset index
+        df = pd.concat([train_data, test_data], axis=0, ignore_index=True)
+
+        self.original_df = df.copy()
+
+        self.one_hot_sensitive()
+        self.one_hot_y()
+
+        self.calculate_stats()
         df = self.process_df(df)
 
-        # Take note of columns to scale with Z-score
-        z_scale_cols = ["fnlwgt", "capital-gain", "capital-loss"]
-        for c in z_scale_cols:
-            # z-score normalization
-            df[c] = (df[c] - df[c].mean()) / df[c].std()
-
-        # Take note of columns to scale with min-max normalization
-        minmax_scale_cols = ["age",  "hours-per-week", "education-num"]
-        for c in minmax_scale_cols:
-            # z-score normalization
-            df[c] = (df[c] - df[c].min()) / df[c].max()
+        self.df = df.copy()
 
         # Split back to train/test data
         self.train_df, self.test_df = df[df['is_train']
@@ -143,21 +322,21 @@ class CensusIncome:
         self.train_df = self.train_df.drop(columns=['is_train'], axis=1)
         self.test_df = self.test_df.drop(columns=['is_train'], axis=1)
 
-        def s_split(this_df, rs=random_state):
-            sss = StratifiedShuffleSplit(n_splits=1,
-                                         test_size=test_ratio,
-                                         random_state=rs)
-            # Stratification on the properties we care about for this dataset
-            # so that adv/victim split does not introduce
-            # unintended distributional shift
-            splitter = sss.split(
-                this_df, this_df[["sex:Female", "race:White", "income"]])
-            split_1, split_2 = next(splitter)
-            return this_df.iloc[split_1], this_df.iloc[split_2]
+        # def s_split(this_df, rs=random_state):
+        #     sss = StratifiedShuffleSplit(n_splits=1,
+        #                                  test_size=test_ratio,
+        #                                  random_state=rs)
+        #     # Stratification on the properties we care about for this dataset
+        #     # so that adv/victim split does not introduce
+        #     # unintended distributional shift
+        #     splitter = sss.split(
+        #         this_df, this_df[["sex:Female", "race:White", "income"]])
+        #     split_1, split_2 = next(splitter)
+        #     return this_df.iloc[split_1], this_df.iloc[split_2]
 
-        # Create train/test splits for victim/adv
-        self.train_df_victim, self.train_df_adv = s_split(self.train_df)
-        self.test_df_victim, self.test_df_adv = s_split(self.test_df)
+        # # Create train/test splits for victim/adv
+        # self.train_df_victim, self.train_df_adv = s_split(self.train_df)
+        # self.test_df_victim, self.test_df_adv = s_split(self.test_df)
 
 
     def get_filter(self, df, filter_prop, split, ratio, is_test, custom_limit=None):
@@ -186,6 +365,35 @@ class CensusIncome:
                             subsample_size, class_imbalance=3,
                             n_tries=100, class_col='income',
                             verbose=False)
+    
+    def get_attack_df(self):
+        df = self.df.copy()
+
+        meta = self.meta
+        cols_to_drop = [meta["sensitive_column"] + "_" + x for x in meta["sensitive_values"] if x != meta["sensitive_positive"]]
+
+        df = df.drop(columns=cols_to_drop, axis=1)
+
+        df[meta["y_column"]] = df[meta["y_column"]].apply((lambda x: meta["y_values"][x]))
+
+        def oneHotCatVars(x, colname):
+            df_1 = x.drop(columns=colname, axis=1)
+            df_2 = pd.get_dummies(x[colname], prefix=colname, prefix_sep='_')
+            return (pd.concat([df_1, df_2], axis=1, join='inner'))       
+        
+        df = oneHotCatVars(df, meta["y_column"])
+
+        self.attack_df = df
+
+        df.rename(columns={meta["sensitive_column"] + "_" + meta["sensitive_positive"]: meta["sensitive_column"]}, inplace=True)
+
+        X = df.drop(columns = [meta["sensitive_column"], "is_train"])
+        y = df[meta["sensitive_column"]]
+
+        self.X_attack, self.y_attack = X, y
+
+        return X, y
+
 
 
 # def cal_q(df, condition):
@@ -217,8 +425,9 @@ class CensusIncome:
 
 # Wrapper for easier access to dataset
 class CensusWrapper:
-    def __init__(self, filter_prop="none", ratio=0.5, split="all"):
-        self.ds = CensusIncome()
+    def __init__(self, filter_prop="none", ratio=0.5, split="all", name="Adult"):
+        self.name = name
+        self.ds = CensusIncome(name=name)
         self.split = split
         self.ratio = ratio
         self.filter_prop = filter_prop
@@ -230,6 +439,24 @@ class CensusWrapper:
                                 custom_limit=custom_limit
                                 )
     
+def oneHotCatVars(x, colname):
+    df_1 = x.drop(columns=colname, axis=1)
+    df_2 = pd.get_dummies(x[colname], prefix=colname, prefix_sep='_')
+    return (pd.concat([df_1, df_2], axis=1, join='inner'))  
+
+def normalize(x_n_tr, x_n_te, normalize=True):
+    if normalize:
+        # x_n_tr_mean = x_n_tr.mean(axis=0)
+        x_n_tr_std = x_n_tr.std(axis=0)
+        # delete columns with std = 0
+        x_n_tr = x_n_tr.loc[:, x_n_tr_std != 0]
+        x_n_te = x_n_te.loc[:, x_n_tr_std != 0]
+        x_n_tr_mean = x_n_tr.mean(axis=0)
+        x_n_tr_std = x_n_tr.std(axis=0)
+
+        x_n_tr = (x_n_tr - x_n_tr_mean) / x_n_tr_std
+        x_n_te = (x_n_te - x_n_tr_mean) / x_n_tr_std
+    return x_n_tr, x_n_te
 
 def filter(df, condition, ratio, verbose=True):
     qualify = np.nonzero((condition(df)).to_numpy())[0]
@@ -298,3 +525,5 @@ def heuristic(df, condition, ratio,
     # Pick the one closest to desired ratio
     picked_df = pckds[np.argmin(vals)]
     return picked_df.reset_index(drop=True)
+
+

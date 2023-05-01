@@ -8,6 +8,7 @@ import os
 from joblib import load, dump
 from sklearn.neural_network import MLPClassifier
 from sklearn.neural_network._base import ACTIVATIONS
+from sklearn.metrics import roc_auc_score
 import platform
 
 device = ch.device("cuda" if ch.cuda.is_available() else "mps" if platform.machine() == "arm64" else "cpu")
@@ -18,16 +19,16 @@ ACTIVATION_DIMS = [32, 16, 8, 2]
 
 
 class PortedMLPClassifier(nn.Module):
-    def __init__(self):
+    def __init__(self, n_in_features=37, n_out_features=2):
         super(PortedMLPClassifier, self).__init__()
         layers = [
-            nn.Linear(in_features=42, out_features=32),
+            nn.Linear(in_features=n_in_features, out_features=32),
             nn.ReLU(),
             nn.Linear(in_features=32, out_features=16),
             nn.ReLU(),
             nn.Linear(in_features=16, out_features=8),
             nn.ReLU(),
-            nn.Linear(in_features=8, out_features=2),
+            nn.Linear(in_features=8, out_features=n_out_features),
             nn.Softmax(dim=1)
         ]
         self.layers = nn.Sequential(*layers)
@@ -79,6 +80,23 @@ class PortedMLPClassifier(nn.Module):
                     return x
 
         return latents
+    
+def train_torch_model(model, X, y, epochs=100, lr=0.01):
+    """
+        Train PyTorch model on given data
+    """
+    model = model.to(device)
+    loss_fn = nn.CrossEntropyLoss()
+    optimizer = ch.optim.Adam(model.parameters(), lr=lr)
+    X = ch.tensor(X, dtype=ch.float32).to(device)
+    y = ch.tensor(y, dtype=ch.long).to(device)
+    for epoch in range(epochs):
+        optimizer.zero_grad()
+        y_pred = model(X)
+        loss = loss_fn(y_pred, y)
+        loss.backward()
+        optimizer.step()
+    return model
 
 
 def port_mlp_to_ch(clf):
@@ -86,7 +104,8 @@ def port_mlp_to_ch(clf):
         Extract weights from MLPClassifier and port
         to PyTorch model.
     """
-    nn_model = PortedMLPClassifier()
+    nn_model = PortedMLPClassifier(n_in_features=clf.coefs_[0].shape[0],
+                                   n_out_features=clf.coefs_[-1].shape[1])
     i = 0
     for (w, b) in zip(clf.coefs_, clf.intercepts_):
         w = ch.from_numpy(w.T).float()
@@ -108,21 +127,38 @@ def convert_to_torch(clfs):
     return np.array([port_mlp_to_ch(clf) for clf in clfs], dtype=object)
 
 
+# def layer_output(data, MLP, layer=0, get_all=False):
+#     """
+#         For a given model and some data, get output for each layer's activations < layer.
+#         If get_all is True, return all activations unconditionally.
+#     """
+#     L = data.copy()
+#     all = []
+#     for i in range(layer):
+#         L = ACTIVATIONS['relu'](
+#             np.matmul(L, MLP.coefs_[i]) + MLP.intercepts_[i])
+#         if get_all:
+#             all.append(L)
+#     if get_all:
+#         return all
+#     return L
+
+
 def layer_output(data, MLP, layer=0, get_all=False):
     """
         For a given model and some data, get output for each layer's activations < layer.
         If get_all is True, return all activations unconditionally.
     """
-    L = data.copy()
+    X = ch.tensor(data, dtype=ch.float64)
+    L = X
     all = []
     for i in range(layer):
-        L = ACTIVATIONS['relu'](
-            np.matmul(L, MLP.coefs_[i]) + MLP.intercepts_[i])
+        L = ch.relu(ch.matmul(L, ch.tensor(MLP.coefs_[i])) + ch.tensor(MLP.intercepts_[i]))
         if get_all:
             all.append(L)
     if get_all:
-        return all
-    return L
+        return [L.detach().numpy() for L in all]
+    return L.detach().numpy()
 
 
 # Load models from directory, return feature representations
@@ -182,12 +218,14 @@ def get_model_representations(folder_path, label, first_n=np.inf,
 
 
 def get_model(max_iter=40,
-              hidden_layer_sizes=(32, 16, 8),):
+              hidden_layer_sizes=(32, 16, 8),
+              random_state=42):
     """
         Create new MLPClassifier model
     """
     clf = MLPClassifier(hidden_layer_sizes=hidden_layer_sizes,
-                        max_iter=max_iter)
+                        max_iter=max_iter,
+                        random_state=random_state)
     return clf
 
 
@@ -313,3 +351,89 @@ def make_affinity_features(models, data, use_logit=False, detach=True, verbose=T
                 model, data, use_logit=use_logit, detach=detach, verbose=verbose)
         )
     return ch.stack(all_features, 0)
+
+def train_torch_model(model, X, y, epochs=100, lr=0.01):
+    """
+        Train PyTorch model on given data
+    """
+    # device = ch.device("cuda" if ch.cuda.is_available() else "cpu")
+    # device = model_utils.device
+    model = model.to(device)
+    loss_fn = nn.CrossEntropyLoss()
+    optimizer = ch.optim.Adam(model.parameters(), lr=lr)
+    X = ch.tensor(X, dtype=ch.float32).to(device)
+    y = ch.tensor(np.argmax(y, axis=1), dtype=ch.long).to(device) # Convert multi-target tensor to class labels
+    for epoch in range(epochs):
+        optimizer.zero_grad()
+        y_pred = model(X)
+        loss = loss_fn(y_pred, y)
+        loss.backward()
+        optimizer.step()
+    return model
+
+def test_torch_model(model, X, y, metric='accuracy'):
+    """
+        Test PyTorch model on given data
+    """
+    # device = model_utils.device
+    model = model.to(device)
+    X = ch.tensor(X, dtype=ch.float32).to(device)
+    y = ch.tensor(np.argmax(y, axis=1), dtype=ch.long).to(device) # Convert multi-target tensor to class labels
+    y_pred = model(X)
+    print(y_pred)
+    # test_loss = nn.CrossEntropyLoss()(y_pred, y).item()
+    if metric == 'accuracy':
+        test_acc = (y_pred.argmax(1) == y).type(ch.float32).mean().item()
+    elif metric == 'auc':
+        test_acc = roc_auc_score(y.cpu().detach().numpy(), y_pred.cpu().detach().numpy())
+    # return test_loss, test_acc
+    return test_acc
+
+def LOMIA_attack(model, X_test, y_test, meta):
+    attack_dataset = []
+    for i in tqdm(range(len(X_test))):
+        # Get the predicted label and true label for this record
+        #pred_label = predicted_labels[i]
+        # true_label = y_test.iloc[i]
+        # true_label = y_enc.transform([y_test.iloc[i]])[0]
+        true_label = y_test[i]
+        
+        # Check if the predicted label matches the true label for only one possible value of the sensitive attribute
+        num_matches = 0
+        matched_value = None
+        # sensitive_values = ["Married", "Single"]
+        sensitive_values = meta["sensitive_values"]
+        sensitive_attr = meta["sensitive_column"]
+        predictions = []
+        for sensitive_value in sensitive_values:
+            record = X_test.iloc[i:i+1].copy()
+            record[sensitive_attr + "_" + sensitive_value] = 1
+
+            for other_value in sensitive_values:
+                if other_value != sensitive_value:
+                    record[sensitive_attr + "_" + other_value] = 0
+            
+            # Check if the predicted label matches the true label for this sensitive value
+            # if clf.predict([record])[0] == true_label:
+            # prediction = np.argmax(model.predict(record.to_numpy().reshape(1, -1))[0])
+            prediction = np.argmax(model.predict(record))
+            # print(prediction)
+            # if model.predict(record.to_numpy().reshape(1, -1))[0] == true_label:
+            if prediction == true_label:
+                num_matches += 1
+                matched_value = sensitive_value
+                
+        # If there is only one match, label the record with the matched value
+        if num_matches == 1:
+            record = X_test.iloc[i:i+1].copy()
+            record[sensitive_attr + "_" + matched_value] = 1
+
+            for other_value in sensitive_values:
+                if other_value != matched_value:
+                    record[sensitive_attr + "_" + other_value] = 0
+            
+            # record[data_dict['y_column']] = (true_label == data_dict['y_pos'])
+            record[meta['y_column']] = true_label
+            attack_dataset.append(record)
+            
+    return attack_dataset
