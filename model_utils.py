@@ -80,23 +80,28 @@ class PortedMLPClassifier(nn.Module):
                     return x
 
         return latents
+
     
-def train_torch_model(model, X, y, epochs=100, lr=0.01):
-    """
-        Train PyTorch model on given data
-    """
-    model = model.to(device)
-    loss_fn = nn.CrossEntropyLoss()
-    optimizer = ch.optim.Adam(model.parameters(), lr=lr)
-    X = ch.tensor(X, dtype=ch.float32).to(device)
-    y = ch.tensor(y, dtype=ch.long).to(device)
-    for epoch in range(epochs):
-        optimizer.zero_grad()
-        y_pred = model(X)
-        loss = loss_fn(y_pred, y)
-        loss.backward()
-        optimizer.step()
-    return model
+# def train_torch_model(model=None, X=None, y=None, epochs=100, lr=0.01):
+#     """
+#         Train PyTorch model on given data
+#     """
+#     if model is None:
+#         model = PortedMLPClassifier(n_in_features=X.shape[1], n_out_features=y.shape[1])
+#     model = model.to(device)
+#     if X is None or y is None:
+#         return model
+#     loss_fn = nn.CrossEntropyLoss()
+#     optimizer = ch.optim.Adam(model.parameters(), lr=lr)
+#     X = ch.tensor(X, dtype=ch.float32).to(device)
+#     y = ch.tensor(y, dtype=ch.long).to(device)
+#     for epoch in range(epochs):
+#         optimizer.zero_grad()
+#         y_pred = model(X)
+#         loss = loss_fn(y_pred, y)
+#         loss.backward()
+#         optimizer.step()
+#     return model
 
 
 def port_mlp_to_ch(clf):
@@ -117,6 +122,38 @@ def port_mlp_to_ch(clf):
     # nn_model = nn_model.cuda()
     nn_model = nn_model.to(device)
     return nn_model
+
+
+def port_ch_to_mlp(nn_model, clf=None):
+    """
+        Extract weights from PyTorch model and port
+        to MLPClassifier.
+    """
+    # if clf is None:
+    #     clf = get_model()
+    #     y_shape_1 = nn_model.layers[-1].weight.shape[0]
+    #     dtype = nn_model.layers[-1].weight.dtype
+    #     hidden_layer_sizes = [nn_model.layers[i].weight.shape[1] for i in range(0, len(nn_model.layers), 2)]
+    #     layer_units = [nn_model.layers[0].weight.shape[0]] + hidden_layer_sizes + [y_shape_1]
+    #     clf.set_params(hidden_layer_sizes=layer_units, activation='relu', solver='adam', alpha=0.0001)
+    #     clf._initialize(np.zeros(1,y_shape_1), layer_units, dtype)
+
+    for i, layer in enumerate(nn_model.layers):
+        if i % 2 == 0:
+            clf.coefs_[i // 2] = layer.weight.detach().cpu().numpy().T
+            clf.intercepts_[i // 2] = layer.bias.detach().cpu().numpy()
+
+    return clf
+
+def proxy_train_mlp(X, y, epochs=100, lr=0.01, l1_reg=0.0):
+    """
+        Train PyTorch model on given data
+    """
+    nn_model = train_torch_model(model=None, X=X, y=y, epochs=epochs, lr=lr, l1_reg=l1_reg)
+    clf = get_model(max_iter=1)
+    clf.fit(X, y)
+    clf = port_ch_to_mlp(nn_model, clf)
+    return clf
 
 
 def convert_to_torch(clfs):
@@ -352,23 +389,41 @@ def make_affinity_features(models, data, use_logit=False, detach=True, verbose=T
         )
     return ch.stack(all_features, 0)
 
-def train_torch_model(model, X, y, epochs=100, lr=0.01):
+def train_torch_model(model=None, X=None, y=None, epochs=100, lr=0.01, l1_reg=0.0):
     """
         Train PyTorch model on given data
     """
-    # device = ch.device("cuda" if ch.cuda.is_available() else "cpu")
-    # device = model_utils.device
+    if model is None:
+        model = PortedMLPClassifier(n_in_features=X.shape[1], n_out_features=y.shape[1])
     model = model.to(device)
+    if X is None or y is None:
+        return model
+    def l1_loss(model):
+        loss = 0.0
+        for param in model.parameters():
+            loss += ch.sum(ch.abs(param))
+        loss = ch.mean(loss)
+        return loss
     loss_fn = nn.CrossEntropyLoss()
     optimizer = ch.optim.Adam(model.parameters(), lr=lr)
     X = ch.tensor(X, dtype=ch.float32).to(device)
     y = ch.tensor(np.argmax(y, axis=1), dtype=ch.long).to(device) # Convert multi-target tensor to class labels
-    for epoch in range(epochs):
-        optimizer.zero_grad()
-        y_pred = model(X)
-        loss = loss_fn(y_pred, y)
-        loss.backward()
-        optimizer.step()
+    # create dataset and dataloader
+    dataset = ch.utils.data.TensorDataset(X, y)
+    dataloader = ch.utils.data.DataLoader(dataset, batch_size=32, shuffle=True)
+    for epoch in tqdm(range(epochs)):
+        for batch_idx, (data, target) in enumerate(dataloader):
+            optimizer.zero_grad()
+            output = model(data)
+            loss = loss_fn(output, target) + l1_reg * l1_loss(model)
+            loss.backward()
+            optimizer.step()
+    # for epoch in range(epochs):
+    #     optimizer.zero_grad()
+    #     y_pred = model(X)
+    #     loss = loss_fn(y_pred, y) + l1_reg * l1_loss(model)
+    #     loss.backward()
+    #     optimizer.step()
     return model
 
 def test_torch_model(model, X, y, metric='accuracy'):
@@ -407,11 +462,13 @@ def LOMIA_attack(model, X_test, y_test, meta):
         predictions = []
         for sensitive_value in sensitive_values:
             record = X_test.iloc[i:i+1].copy()
-            record[sensitive_attr + "_" + sensitive_value] = 1
+            # record[sensitive_attr + "_" + sensitive_value] = 1
+            record[f'{sensitive_attr}_{sensitive_value}'] = 1
 
             for other_value in sensitive_values:
                 if other_value != sensitive_value:
-                    record[sensitive_attr + "_" + other_value] = 0
+                    # record[sensitive_attr + "_" + other_value] = 0
+                    record[f'{sensitive_attr}_{other_value}'] = 0
             
             # Check if the predicted label matches the true label for this sensitive value
             # if clf.predict([record])[0] == true_label:
@@ -426,11 +483,13 @@ def LOMIA_attack(model, X_test, y_test, meta):
         # If there is only one match, label the record with the matched value
         if num_matches == 1:
             record = X_test.iloc[i:i+1].copy()
-            record[sensitive_attr + "_" + matched_value] = 1
+            # record[sensitive_attr + "_" + matched_value] = 1
+            record[f'{sensitive_attr}_{matched_value}'] = 1
 
             for other_value in sensitive_values:
                 if other_value != matched_value:
-                    record[sensitive_attr + "_" + other_value] = 0
+                    # record[sensitive_attr + "_" + other_value] = 0
+                    record[f'{sensitive_attr}_{other_value}'] = 0
             
             # record[data_dict['y_column']] = (true_label == data_dict['y_pos'])
             record[meta['y_column']] = true_label

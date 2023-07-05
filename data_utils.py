@@ -1,12 +1,12 @@
 # import utils
 import numpy as np
-from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import StratifiedShuffleSplit, train_test_split
 from sklearn.preprocessing import OneHotEncoder
 import requests
 import pandas as pd
 import os
 from tqdm import tqdm
-
+from collections import defaultdict
 
 BASE_DATA_DIR = "<PATH_TO_DATASET>"
 
@@ -15,10 +15,14 @@ PROPERTY_FOCUS = {"sex": "Female", "race": "White"}
 SUPPORTED_RATIOS = ["0.0", "0.1", "0.2", "0.3",
                     "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "1.0"]
 
+class KeyDefaultDict(defaultdict):
+    def __missing__(self, key):
+        return key
+
 
 # US Income dataset
 class CensusIncome:
-    def __init__(self, name="Adult", path=BASE_DATA_DIR):
+    def __init__(self, name="Adult", path=BASE_DATA_DIR, sensitive_column="default", preload=True, sampling_condition_dict_list=None):
         # self.urls = [
         #     "http://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
         #     "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.names",
@@ -58,6 +62,43 @@ class CensusIncome:
                 "sensitive_column": "marital",
                 "sensitive_values": ["Married", "Single"],
                 "sensitive_positive": "Married"
+            }
+        elif name == "Census19":
+            if sensitive_column == "default":
+                sensitive_column = "MAR"
+            self.meta = {
+                # "train_data_path": os.path.join(self.path, "Adult_35222.csv"),
+                # "test_data_path": os.path.join(self.path, "Adult_10000.csv"),
+                "data_path": os.path.join(self.path, "census19.csv"),
+                # "all_columns": [
+                #     "age", "workClass", "fnlwgt", "education", "education-num",
+                #     "marital-status", "occupation", "relationship",
+                #     "race", "sex", "capital-gain", "capital-loss",
+                #     "hours-per-week", "native-country", "income"
+                # ],
+                "all_columns": ['AGEP', 'COW', 'SCHL', 'MAR', 'RAC1P', 'SEX', 'DREM', 'DPHY', 'DEAR',
+                                'DEYE', 'WKHP', 'WAOB', 'ST', 'PINCP'],   
+                "cat_columns": ['COW', 'SCHL', 'MAR', 'RAC1P', 'SEX', 'DREM', 'DPHY', 'DEAR',
+                                'DEYE', 'WAOB', 'ST'],
+                # "num_columns": ["age", "fnlwgt", "capitalgain", "capitalloss", "hoursperweek"],
+                "num_columns": {
+                    "zscaler": [],
+                    "minmaxscaler": ['AGEP', 'WKHP']
+                },
+                "y_column": "PINCP",
+                "y_positive": '1',
+                "y_values": ['0', '1'],
+                "sensitive_column": sensitive_column,
+                "sensitive_values": [0, 1],
+                "sensitive_positive": defaultdict(lambda: 1, {'MAR': 0})[sensitive_column],
+                "transformations": [
+                    lambda df: df.drop(columns=['PUMA']),
+                    lambda df: df.assign(MAR = df['MAR'].apply(lambda x: 1 if x >= 1 else 0)),
+                    lambda df: df.assign(RAC1P = df['RAC1P'].apply(lambda x: 0 if x <= 1 else 1)),
+                    # lambda df: df.assign(sensitive_column = df[sensitive_column].astype('str')),
+                    lambda df: df.assign(PINCP = df['PINCP'].apply(lambda x: '1' if x > 90000 else '0')),
+                    # lambda df: df.assign(PINCP = df['PINCP'].astype('str')),
+                ]
             }
         elif name == "GSS":
             self.meta = {
@@ -102,7 +143,8 @@ class CensusIncome:
                 
         # self.download_dataset()
         # self.load_data(test_ratio=0.4)
-        self.load_data(test_ratio=0.5)
+        if preload:
+            self.load_data(test_ratio=0.5, sampling_condition_dict_list=sampling_condition_dict_list)
 
 
     # Download dataset, if not present
@@ -287,7 +329,7 @@ class CensusIncome:
         return prepare_one_set(self.train_df_adv, self.test_df_adv)
 
     # Create adv/victim splits, normalize data, etc
-    def load_data(self, test_ratio, random_state=42):
+    def load_data(self, test_ratio, random_state=42, sampling_condition_dict_list=None):
         # Load train, test data
         # train_data = pd.read_csv(os.path.join(self.path, 'adult.data'),
         #                          names=self.columns, sep=' *, *',
@@ -295,14 +337,32 @@ class CensusIncome:
         # test_data = pd.read_csv(os.path.join(self.path, 'adult.test'),
         #                         names=self.columns, sep=' *, *', skiprows=1,
         #                         na_values='?', engine='python')
-        train_data = pd.read_csv(self.meta["train_data_path"])
-        test_data = pd.read_csv(self.meta["test_data_path"])
+        if "train_data_path" in self.meta and "test_data_path" in self.meta:
+            train_data = pd.read_csv(self.meta["train_data_path"])
+            test_data = pd.read_csv(self.meta["test_data_path"])
+        elif sampling_condition_dict_list is not None:
+            data = pd.read_csv(self.meta["data_path"])
+            sampled_data = None
+            for condition_dict in sampling_condition_dict_list:
+                sampled_data = pd.concat([sampled_data, data[condition_dict['condition'](data)].sample(n=condition_dict['sample_size'], random_state=random_state)])
+            # split into train/test
+            train_data, test_data = train_test_split(sampled_data, test_size=test_ratio, random_state=random_state)
+        else:
+            data = pd.read_csv(self.meta["data_path"])
+            # randomly sample 100,000 data points
+            data = data.sample(n=100000, random_state=random_state)
+            # split into train/test
+            train_data, test_data = train_test_split(data, test_size=test_ratio, random_state=random_state)
 
         # Add field to identify train/test, process together
         train_data['is_train'] = 1
         test_data['is_train'] = 0
         # concat train and test data and reset index
         df = pd.concat([train_data, test_data], axis=0, ignore_index=True)
+
+        if 'transformations' in self.meta:
+            for transformation in self.meta['transformations']:
+                df = transformation(df)
 
         self.original_df = df.copy()
 
@@ -369,8 +429,11 @@ class CensusIncome:
     def get_attack_df(self):
         df = self.df.copy()
 
+        df = df[df['is_train'] == 1]
+
         meta = self.meta
-        cols_to_drop = [meta["sensitive_column"] + "_" + x for x in meta["sensitive_values"] if x != meta["sensitive_positive"]]
+        # cols_to_drop = [meta["sensitive_column"] + "_" + x for x in meta["sensitive_values"] if x != meta["sensitive_positive"]]
+        cols_to_drop = [f'{meta["sensitive_column"]}_{x}' for x in meta["sensitive_values"] if x != meta["sensitive_positive"]]
 
         df = df.drop(columns=cols_to_drop, axis=1)
 
@@ -385,7 +448,8 @@ class CensusIncome:
 
         self.attack_df = df
 
-        df.rename(columns={meta["sensitive_column"] + "_" + meta["sensitive_positive"]: meta["sensitive_column"]}, inplace=True)
+        # df.rename(columns={meta["sensitive_column"] + "_" + meta["sensitive_positive"]: meta["sensitive_column"]}, inplace=True)
+        df.rename(columns={f'{meta["sensitive_column"]}_{meta["sensitive_positive"]}': meta["sensitive_column"]}, inplace=True)
 
         X = df.drop(columns = [meta["sensitive_column"], "is_train"])
         y = df[meta["sensitive_column"]]
@@ -425,9 +489,9 @@ class CensusIncome:
 
 # Wrapper for easier access to dataset
 class CensusWrapper:
-    def __init__(self, filter_prop="none", ratio=0.5, split="all", name="Adult"):
+    def __init__(self, filter_prop="none", ratio=0.5, split="all", name="Adult", sensitive_column="default", preload=True, sampling_condition_dict_list=None):
         self.name = name
-        self.ds = CensusIncome(name=name)
+        self.ds = CensusIncome(name=name, sensitive_column=sensitive_column, preload=preload, sampling_condition_dict_list=sampling_condition_dict_list)
         self.split = split
         self.ratio = ratio
         self.filter_prop = filter_prop
@@ -525,5 +589,66 @@ def heuristic(df, condition, ratio,
     # Pick the one closest to desired ratio
     picked_df = pckds[np.argmin(vals)]
     return picked_df.reset_index(drop=True)
+
+
+def filter_random_data(ds, clf, confidence_threshold=0.99, num_samples=100000, seed=42):
+    def oneHotCatVars(x, colname):
+        df_1 = x.drop(columns=colname, axis=1)
+        df_2 = pd.get_dummies(x[colname], prefix=colname, prefix_sep='_')
+        return (pd.concat([df_1, df_2], axis=1, join='inner'))
+
+    random_df, random_oh_df = ds.ds.get_random_data(num_samples)
+    data_dict = ds.ds.meta
+    X_random = random_oh_df.drop(data_dict['y_column'], axis=1)
+    default_cols = X_random.columns
+    # y = random_oh_df[data_dict['y_column']]
+
+    sensitive_attr = data_dict['sensitive_column']
+    sensitive_values = data_dict['sensitive_values']
+    prediction_columns = []
+    for sensitive_value in sensitive_values:
+        X_random[sensitive_attr + "_" + sensitive_value] = pd.Series(np.ones(X_random.shape[0]), index=X_random.index)
+        for other_value in sensitive_values:
+            if other_value != sensitive_value:
+                X_random[sensitive_attr + "_" + other_value] = pd.Series(np.zeros(X_random.shape[0]), index=X_random.index)
+
+        newcolname = "prediction_" + sensitive_value
+        prediction_columns.append(newcolname)
+        X_random[newcolname] = pd.Series(np.argmax(clf.predict(X_random[default_cols]), axis=1), index=X_random.index)
+        X_random["confidence_" + sensitive_value] = pd.Series(np.max(clf.predict_proba(X_random[default_cols]), axis=1), 
+                                                            index=X_random.index)
+
+    X_random['all_predictions'] = X_random[prediction_columns].apply(pd.Series.unique, axis=1)
+
+    # X_random = X_random[X_random['all_predictions'].apply(lambda x: len(x)==len(sensitive_values))]
+
+
+    dfs = []
+
+    for sensitive_value in sensitive_values:
+        X_temp = X_random[default_cols].copy()
+
+        X_temp[sensitive_attr + "_" + sensitive_value] = pd.Series(np.ones(X_temp.shape[0]), index=X_random.index)
+        for other_value in sensitive_values:
+            if other_value != sensitive_value:
+                X_temp[sensitive_attr + "_" + other_value] = pd.Series(np.zeros(X_temp.shape[0]), index=X_random.index)
+
+        X_temp[data_dict['y_column']] = X_random["prediction_" + sensitive_value].apply(lambda x: data_dict['y_values'][x])
+        X_temp['confidence'] = X_random["confidence_" + sensitive_value]
+
+        dfs.append(X_temp.copy())
+
+    random_oh_df = pd.concat(dfs, ignore_index=True)
+
+    random_oh_df = random_oh_df[random_oh_df['confidence'].apply(lambda x: x > confidence_threshold)].drop('confidence', axis=1)
+
+    random_oh_df = oneHotCatVars(random_oh_df, data_dict['y_column'])
+
+    #convert datatype to float
+    random_oh_df = random_oh_df.astype(float)
+
+    return random_oh_df
+
+    
 
 
