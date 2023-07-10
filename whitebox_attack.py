@@ -2,7 +2,7 @@ import torch as ch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.metrics import auc
 import matplotlib.pyplot as plt
 
@@ -31,11 +31,11 @@ def make_neuron_output_data(ds, df, MLP, y_columns=None):
     X_with_sensitive_positive = df.copy()
     positive_value = ds.ds.meta['sensitive_positive']
     negative_value = [val for val in ds.ds.meta['sensitive_values'] if val != positive_value][0]
-    X_with_sensitive_positive[ds.ds.meta['sensitive_column'] + "_" + positive_value] = 1
-    X_with_sensitive_positive[ds.ds.meta['sensitive_column'] + "_" + negative_value] = 0
+    X_with_sensitive_positive[f'{ds.ds.meta["sensitive_column"]}_{positive_value}'] = 1
+    X_with_sensitive_positive[f'{ds.ds.meta["sensitive_column"]}_{negative_value}'] = 0
     X_with_sensitive_negative = df.copy()
-    X_with_sensitive_negative[ds.ds.meta['sensitive_column'] + "_" + positive_value] = 0
-    X_with_sensitive_negative[ds.ds.meta['sensitive_column'] + "_" + negative_value] = 1
+    X_with_sensitive_negative[f'{ds.ds.meta["sensitive_column"]}_{positive_value}'] = 0
+    X_with_sensitive_negative[f'{ds.ds.meta["sensitive_column"]}_{negative_value}'] = 1
 
     X_neuron_output_positive = neuron_output(X_with_sensitive_positive.to_numpy(), MLP)
     X_neuron_output_negative = neuron_output(X_with_sensitive_negative.to_numpy(), MLP)
@@ -77,6 +77,7 @@ class Top10CorrNeurons(nn.Module):
         self.top_10_neuron_std = top_10_neuron_std
         self.corrs_top_10 = corrs_top_10
         self.corrs_top_10_vals = corrs_top_10_vals/np.sum(corrs_top_10_vals)
+        self.threshold = 0.5
 
     def forward(self, X_neuron):
         # normalize the top 10 neurons
@@ -105,5 +106,12 @@ def wb_corr_attacks(X_neuron, y):
 
     # create the model
     top_10_corr_neurons_model = Top10CorrNeurons(top_10_neuron_mean, top_10_neuron_std, corrs_top_10, corrs_top_10_vals)
+
+    y_pred = top_10_corr_neurons_model(ch.from_numpy(X_neuron).float()).detach().numpy()
+
+    # get the best threshold
+    fpr, tpr, thresholds = roc_curve(y_wb_att, y_pred)
+    best_threshold = thresholds[np.argmax(tpr - fpr)]
+    top_10_corr_neurons_model.threshold = best_threshold
 
     return top_10_corr_neurons_model
