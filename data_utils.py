@@ -8,7 +8,7 @@ import os
 from tqdm import tqdm
 from collections import defaultdict
 
-BASE_DATA_DIR = "<PATH_TO_DATASET>"
+BASE_DATA_DIR = "datasets"
 
 SUPPORTED_PROPERTIES = ["sex", "race", "none"]
 PROPERTY_FOCUS = {"sex": "Female", "race": "White"}

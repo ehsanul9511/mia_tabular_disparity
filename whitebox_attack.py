@@ -63,7 +63,7 @@ def roc_curve_plot(fpr, tpr):
     plt.show()
 
 def get_LOMIA_case_1_correct_examples(ds, X_train):
-    attack_df = pd.read_csv(f'<PATH_TO_DATASET>/{ds.ds.name}_attack.csv')
+    attack_df = pd.read_csv(f'datasets/{ds.ds.name}_attack.csv')
     attack_df.index = attack_df['Unnamed: 0']
     attack_df.index.name = None
     attack_df = attack_df.drop('Unnamed: 0', axis=1)

@@ -54,14 +54,14 @@ ds.ds.filenameroot = ds.ds.name + f"_{subgroup_col_name}_{round(100*split_ratio_
 save_model = True
 
 try:
-    clf = model_utils.load_model(f'<PATH_TO_MODEL>/{ds.ds.filenameroot}_target_model.pkl')
+    clf = model_utils.load_model(f'models/{ds.ds.filenameroot}_target_model.pkl')
 except:
     # clf = model_utils.get_model(max_iter=500, hidden_layer_sizes=(256, 256))
     clf = model_utils.get_model(max_iter=500)
     clf.fit(X_train, y_tr_onehot)
 
     if save_model:
-        model_utils.save_model(clf, f'<PATH_TO_MODEL>/{ds.ds.filenameroot}_target_model.pkl')
+        model_utils.save_model(clf, f'models/{ds.ds.filenameroot}_target_model.pkl')
 
 
 attack_types = ['LOMIA', 'INV', 'PCA', 'GRAD', 'NEUR_OURS', 'NEUR_IMP']
@@ -83,7 +83,7 @@ def LOMIA(all_sensitive_columns = ['MAR', 'DEAR', 'DEYE', 'DREM', 'DPHY'], metri
 
         # subgroup_columns = ['RAC1P']
 
-        attack_clf = model_utils.load_model(f'<PATH_TO_MODEL>/{temp_ds.ds.filenameroot}_LOMIA_attack_{temp_ds.ds.meta["sensitive_column"]}_model.pkl')
+        attack_clf = model_utils.load_model(f'models/{temp_ds.ds.filenameroot}_LOMIA_attack_{temp_ds.ds.meta["sensitive_column"]}_model.pkl')
 
         subgroup_disparity_dict = get_disparity_by_subgroup(ds=ds, X_att_query=X, y_att_query=y, subgroup_columns=subgroup_columns, clf=attack_clf, metric=metric)
 
@@ -110,7 +110,7 @@ def INV(all_sensitive_columns = ['MAR', 'DEAR', 'DEYE', 'DREM', 'DPHY'], metric=
         # subgroup_columns = ['RAC1P']
 
         try:
-            inv_clf = model_utils.load_model(f'<PATH_TO_MODEL>/{temp_ds.ds.filenameroot}_inverse_model_{sensitive_column}.pkl')
+            inv_clf = model_utils.load_model(f'models/{temp_ds.ds.filenameroot}_inverse_model_{sensitive_column}.pkl')
 
         except:
             x_tr, x_te, y_tr, y_te = train_test_split(X, y_onehot, test_size=0.9, random_state=42)
@@ -124,7 +124,7 @@ def INV(all_sensitive_columns = ['MAR', 'DEAR', 'DEYE', 'DREM', 'DPHY'], metric=
             # print(f'Inverse accuracy with test size : {acc}')
 
             if save_model:
-                model_utils.save_model(inv_clf, f'<PATH_TO_MODEL>/{temp_ds.ds.filenameroot}_inverse_model_{sensitive_column}.pkl')
+                model_utils.save_model(inv_clf, f'models/{temp_ds.ds.filenameroot}_inverse_model_{sensitive_column}.pkl')
         
         subgroup_disparity_dict = get_disparity_by_subgroup(attack_type='INV', ds=ds, subgroup_columns=subgroup_columns, X_att_query=X, y_att_query=y, metric=metric, clf=inv_clf)
         subgroup_disparity_dicts[sensitive_column] = subgroup_disparity_dict
@@ -179,8 +179,8 @@ def PCA_attack(all_sensitive_columns = ['default', 'DEAR', 'DEYE', 'DREM', 'DPHY
         # subgroup_columns = ['RAC1P']
 
         try:
-            pca_clf = model_utils.load_model(f'<PATH_TO_MODEL>/{temp_ds.ds.filenameroot}_pca_model_{sensitive_column}.pkl')
-            with open(f'<PATH_TO_MODEL>/{temp_ds.ds.filenameroot}_pca_model_pca_{sensitive_column}.pkl', 'rb') as f:
+            pca_clf = model_utils.load_model(f'models/{temp_ds.ds.filenameroot}_pca_model_{sensitive_column}.pkl')
+            with open(f'models/{temp_ds.ds.filenameroot}_pca_model_pca_{sensitive_column}.pkl', 'rb') as f:
                 pca = pickle.load(f)
         except:
             x_tr, x_te, y_tr, y_te = train_test_split(X, y_onehot, test_size=0.9, random_state=42)
@@ -194,8 +194,8 @@ def PCA_attack(all_sensitive_columns = ['default', 'DEAR', 'DEYE', 'DREM', 'DPHY
             pca_clf.fit(x_tr, y_tr)
 
             if save_model:
-                model_utils.save_model(pca_clf, f'<PATH_TO_MODEL>/{temp_ds.ds.filenameroot}_pca_model_{sensitive_column}.pkl')
-                with open(f'<PATH_TO_MODEL>/{temp_ds.ds.filenameroot}_pca_model_pca_{sensitive_column}.pkl', 'wb') as f:
+                model_utils.save_model(pca_clf, f'models/{temp_ds.ds.filenameroot}_pca_model_{sensitive_column}.pkl')
+                with open(f'models/{temp_ds.ds.filenameroot}_pca_model_pca_{sensitive_column}.pkl', 'wb') as f:
                     pickle.dump(pca, f)
 
         X = pd.DataFrame(pca.transform(X), index=X.index)
@@ -230,7 +230,7 @@ def NEUR(all_sensitive_columns = ['MAR', 'DEAR', 'DEYE', 'DREM', 'DPHY'], metric
 
         if attack_subtype == 'NEUR_OURS':
             try:
-                neur_clf = model_utils.load_model(f'<PATH_TO_MODEL>/{temp_ds.ds.filenameroot}_neurours_model_{sensitive_column}.pkl')
+                neur_clf = model_utils.load_model(f'models/{temp_ds.ds.filenameroot}_neurours_model_{sensitive_column}.pkl')
             except:
                 neur_clf = model_utils.get_model(max_iter=500)
                 neur_clf.fit(x_n_tr, y_tr)
@@ -241,7 +241,7 @@ def NEUR(all_sensitive_columns = ['MAR', 'DEAR', 'DEYE', 'DREM', 'DPHY'], metric
                 # print(f'NeurOurs accuracy with test size : {acc}')
 
                 if save_model:
-                    model_utils.save_model(neur_clf, f'<PATH_TO_MODEL>/{temp_ds.ds.filenameroot}_neurours_model_{sensitive_column}.pkl')
+                    model_utils.save_model(neur_clf, f'models/{temp_ds.ds.filenameroot}_neurours_model_{sensitive_column}.pkl')
         else:
             neur_clf = wb_corr_attacks(x_n_tr, y_tr)
         
