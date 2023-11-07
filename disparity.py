@@ -205,6 +205,29 @@ def PCA_attack(all_sensitive_columns = ['default', 'DEAR', 'DEYE', 'DREM', 'DPHY
 
     return subgroup_disparity_dicts
 
+
+def CSMIA(all_sensitive_columns = ['MAR', 'DEAR', 'DEYE', 'DREM', 'DPHY'], metric='auc', target_clf=None):
+    subgroup_disparity_dicts = {}
+
+    for sensitive_column in all_sensitive_columns:
+        temp_ds = data_utils.CensusWrapper(
+                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict_list=sampling_condition_dict_list, sensitive_column=sensitive_column)
+        temp_ds.ds.filenameroot = temp_ds.ds.name + f"_{subgroup_col_name}_{round(100*split_ratio_first_subgroup)}_{round(100*(1-split_ratio_first_subgroup))}_minority_categorized"
+        X, y = temp_ds.ds.get_attack_df()
+
+        X = X.astype(float)
+
+        y_onehot = temp_ds.ds.sensitive_enc.transform(y.to_numpy().ravel().reshape(-1, 1)).toarray()
+
+        sensitive_values = temp_ds.ds.meta['sensitive_values']
+
+        full_sensitive_col_names = [f'{sensitive_column}_{sensitive_value}' for sensitive_value in sensitive_values]
+
+        
+
+
+
+
 def NEUR(all_sensitive_columns = ['MAR', 'DEAR', 'DEYE', 'DREM', 'DPHY'], metric='auc', attack_subtype='NEUR_OURS', target_clf=None):
     save_model = True
 

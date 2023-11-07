@@ -1,6 +1,8 @@
 import numpy as np
+import pandas as pd
+from numpy.random import RandomState
 from tqdm import tqdm
-from typing import List
+from typing import List, Literal
 import torch as ch
 import torch.nn as nn
 import os
@@ -8,14 +10,33 @@ import os
 from joblib import load, dump
 from sklearn.neural_network import MLPClassifier
 from sklearn.neural_network._base import ACTIVATIONS
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score, accuracy_score, matthews_corrcoef, confusion_matrix
+from imblearn.metrics import geometric_mean_score
 import platform
+from fairlearn.reductions import ExponentiatedGradient
+from fairlearn.reductions._moments import ClassificationMoment
 
 device = ch.device("cuda" if ch.cuda.is_available() else "mps" if platform.machine() == "arm64" else "cpu")
 
 
 BASE_MODELS_DIR = "<PATH_TO_MODELS>"
 ACTIVATION_DIMS = [32, 16, 8, 2]
+
+
+class MLPClassifierFC(MLPClassifier):
+    def fit(self, X, y, sample_weights=None):
+        """
+            Fit the model to the given data.
+        """
+        if sample_weights is not None:
+            # resample data according to sample weights
+            rng = RandomState(self.random_state)
+            n_samples = X.shape[0]
+            sample_idxs = rng.choice(n_samples, size=n_samples, replace=True, p=sample_weights)
+            X = X[sample_idxs]
+            y = y[sample_idxs]
+            
+        return super().fit(X, y)
 
 
 class PortedMLPClassifier(nn.Module):
@@ -444,8 +465,21 @@ def test_torch_model(model, X, y, metric='accuracy'):
     # return test_loss, test_acc
     return test_acc
 
+# def CSMIA_attack(model, X_test, y_test, meta):
+#     dfs = [X_test.copy() for _ in range(len(meta["sensitive_values"]))]
+#     sensitive_columns = [f'{meta["sensitive_column"]}_{i}' for i in range(len(meta["sensitive_values"]))]
+#     for i in range(len(dfs)):
+#         dfs[i][sensitive_columns] = 0
+#         dfs[i][f'{meta["sensitive_column"]}_{i}'] = 1
+    
+#     y_preds = [np.argmax(model.predict_proba(df), axis=1) for df in dfs]
+#     y_preds = np.array(y_preds).T
+#     y_matched 
+
 def LOMIA_attack(model, X_test, y_test, meta):
     attack_dataset = []
+    lomia_indices = []
+    correct_indices = []
     for i in tqdm(range(len(X_test))):
         # Get the predicted label and true label for this record
         #pred_label = predicted_labels[i]
@@ -484,6 +518,8 @@ def LOMIA_attack(model, X_test, y_test, meta):
         if num_matches == 1:
             record = X_test.iloc[i:i+1].copy()
             # record[sensitive_attr + "_" + matched_value] = 1
+            if record[f'{sensitive_attr}_{matched_value}'].to_numpy() == 1:
+                correct_indices.append(i)
             record[f'{sensitive_attr}_{matched_value}'] = 1
 
             for other_value in sensitive_values:
@@ -494,5 +530,111 @@ def LOMIA_attack(model, X_test, y_test, meta):
             # record[data_dict['y_column']] = (true_label == data_dict['y_pos'])
             record[meta['y_column']] = true_label
             attack_dataset.append(record)
+            lomia_indices.append(i)
             
-    return attack_dataset
+    return attack_dataset, lomia_indices, correct_indices
+
+
+def predict_proba_for_mitiagtor(mitigator, X):
+    pred = pd.DataFrame()
+    for t in range(len(mitigator._hs)):
+        if mitigator.weights_[t] == 0:
+            pred[t] = np.zeros(len(X))
+        else:
+            pred[t] = mitigator._hs[t]._classifier.predict_proba(X).max(axis=1)
+    
+    if isinstance(mitigator.constraints, ClassificationMoment):
+        positive_probs = pred[mitigator.weights_.index].dot(mitigator.weights_).to_frame()
+        return np.concatenate((1 - positive_probs, positive_probs), axis=1)
+    else:
+        return pred
+
+def CSMIA_attack(model, X_test, y_test, meta):
+    dfs = [X_test.copy() for _ in range(len(meta["sensitive_values"]))]
+    sensitive_columns = [f'{meta["sensitive_column"]}_{i}' for i in range(len(meta["sensitive_values"]))]
+    for i in range(len(dfs)):
+        dfs[i][sensitive_columns] = 0
+        dfs[i][f'{meta["sensitive_column"]}_{i}'] = 1
+    
+    if isinstance(model, ExponentiatedGradient):
+        y_confs = np.array([np.max(predict_proba_for_mitiagtor(model, df), axis=1) for df in dfs]).T
+        y_preds = [np.argmax(model._pmf_predict(df), axis=1)==y_test.ravel() for df in dfs]
+    else:
+        y_confs = np.array([np.max(model.predict_proba(df), axis=1) for df in dfs]).T
+        y_preds = [np.argmax(model.predict_proba(df), axis=1)==y_test.ravel() for df in dfs]
+    y_preds = np.array(y_preds).T
+    case_1_indices = (y_preds.sum(axis=1) == 1)
+    case_2_indices = (y_preds.sum(axis=1) > 1)
+    case_3_indices = (y_preds.sum(axis=1) == 0)
+
+    eq_conf_indices = np.argwhere(y_confs[:, 0] == y_confs[:, 1]).ravel()
+    # randomly add eps to one of the confidences for the records with equal confidences
+    y_confs[eq_conf_indices, np.random.randint(0, 2, len(eq_conf_indices))] += 1e-6
+
+    sens_pred = np.zeros(y_preds.shape[0])
+    sens_pred[case_1_indices] = np.argmax(y_preds[case_1_indices], axis=1)
+    sens_pred[case_2_indices] = np.argmax(y_confs[case_2_indices], axis=1)
+    sens_pred[case_3_indices] = np.argmin(y_confs[case_3_indices], axis=1)
+    return sens_pred, {1: case_1_indices, 2: case_2_indices, 3: case_3_indices}
+
+def get_CSMIA_case_by_case_results(clf, X_train, y_tr, ds, subgroup_col_name, metric='precision'):
+    sens_pred, case_indices = CSMIA_attack(clf, X_train, y_tr, ds.ds.meta)
+    sensitive_col_name = f'{ds.ds.meta["sensitive_column"]}_1'
+    correct_indices = (sens_pred == X_train[[sensitive_col_name]].to_numpy().ravel())
+
+    # subgroup_csmia_case_dict = {
+    #     i: X_train.iloc[np.argwhere(case_indices[i]).ravel()][f'{subgroup_col_name}_1'].value_counts() for i in range(1, 4)
+    # }
+
+    subgroup_csmia_case_indices_by_subgroup_dict = {
+        i: { j: np.intersect1d(np.argwhere(case_indices[i]).ravel(), np.argwhere(X_train[f'{subgroup_col_name}_1'].to_numpy().ravel() == j).ravel()) for j in [1, 0] } for i in range(1, 4)
+    }
+
+    subgroup_csmia_case_indices_by_subgroup_dict['All Cases'] = { j: np.argwhere(X_train[f'{subgroup_col_name}_1'].to_numpy().ravel() == j).ravel() for j in [1, 0] }
+
+    def fun(metric):
+        if metric.__name__ in ['precision_score', 'recall_score', 'f1_score']:
+            return lambda x: round(100 * metric(x[0], x[1], pos_label=0), 4)
+        else:
+            return lambda x: round(100 * metric(x[0], x[1]), 4)
+    
+    def fun2(x):
+        tp, fn, fp, tn = confusion_matrix(x[0], x[1]).ravel()
+        return f"TP: {tp}, FP: {fp}, FN: {fn}, TN: {tn}"
+    
+    def false_positive_rate(x):
+        tp, fn, fp, tn = confusion_matrix(x[0], x[1]).ravel()
+        return round(100 * fp / (fp + tn), 4)
+
+    eval_func = { 
+        'precision': fun(precision_score),
+        'recall': fun(recall_score),
+        'f1': fun(f1_score),
+        'accuracy': fun(accuracy_score),
+        'fpr': false_positive_rate,
+        # 'confusion_matrix': lambda x: f"TP: {confusion_matrix(x[0], x[1], labels=labels)[0, 0]}, FP: {confusion_matrix(x[0], x[1], labels=labels)[0, 1]}, FN: {confusion_matrix(x[0], x[1], labels=labels)[1, 0]}, TN: {confusion_matrix(x[0], x[1], labels=labels)[1, 1]}",
+        'confusion_matrix': fun2,
+        'mcc': fun(matthews_corrcoef),
+        'gmean': fun(geometric_mean_score),
+    }[metric]
+
+    perf_dict = {
+        i: { j: eval_func((X_train.loc[subgroup_csmia_case_indices_by_subgroup_dict[i][j], sensitive_col_name], sens_pred[subgroup_csmia_case_indices_by_subgroup_dict[i][j]])) for j in [1, 0] } for i in [1, 2, 3, 'All Cases']
+    }
+
+    temp_dict = {
+        f'Case {i}': { j: f'{subgroup_csmia_case_indices_by_subgroup_dict[i][j].shape[0]} ({perf_dict[i][j]})' for j in [1, 0] } for i in [1, 2, 3, 'All Cases']
+    }
+
+    # subgroup_csmia_case_correct_dict = {
+    #     i: X_train.iloc[np.intersect1d(np.argwhere(case_indices[i]).ravel(), np.argwhere(correct_indices).ravel())][f'{subgroup_col_name}_1'].value_counts() for i in range(1, 4)
+    # }
+
+    # temp_dict = {
+    #     f'Case {i}': { j: f'{subgroup_csmia_case_dict[i][j]} ({round(100 * subgroup_csmia_case_correct_dict[i][j] / subgroup_csmia_case_dict[i][j], 2)})' for j in [1, 0] } for i in range(1, 4)
+    # }
+    # temp_dict['All Cases'] = { j: f'{subgroup_csmia_case_dict[1][j] + subgroup_csmia_case_dict[2][j] + subgroup_csmia_case_dict[3][j]} ({round(100 * (subgroup_csmia_case_correct_dict[1][j] + subgroup_csmia_case_correct_dict[2][j] + subgroup_csmia_case_correct_dict[3][j]) / (subgroup_csmia_case_dict[1][j] + subgroup_csmia_case_dict[2][j] + subgroup_csmia_case_dict[3][j]), 2)})' for j in [1, 0] }
+
+    temp_df = pd.DataFrame.from_dict(temp_dict, orient='index')
+    return temp_df
+
