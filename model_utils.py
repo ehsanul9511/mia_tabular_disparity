@@ -8,6 +8,7 @@ import torch.nn as nn
 import os
 # from utils import check_if_inside_cluster, make_affinity_features
 from joblib import load, dump
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.neural_network._base import ACTIVATIONS
 from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score, accuracy_score, matthews_corrcoef, confusion_matrix
@@ -559,6 +560,9 @@ def CSMIA_attack(model, X_test, y_test, meta):
     if isinstance(model, ExponentiatedGradient):
         y_confs = np.array([np.max(predict_proba_for_mitiagtor(model, df), axis=1) for df in dfs]).T
         y_preds = [np.argmax(model._pmf_predict(df), axis=1)==y_test.ravel() for df in dfs]
+    elif isinstance(model, DecisionTreeClassifier):
+        y_confs = np.array([np.max(model.predict_proba(df)[1], axis=1) for df in dfs]).T
+        y_preds = [np.argmax(model.predict_proba(df)[1], axis=1)==y_test.ravel() for df in dfs]
     else:
         y_confs = np.array([np.max(model.predict_proba(df), axis=1) for df in dfs]).T
         y_preds = [np.argmax(model.predict_proba(df), axis=1)==y_test.ravel() for df in dfs]
@@ -577,8 +581,13 @@ def CSMIA_attack(model, X_test, y_test, meta):
     sens_pred[case_3_indices] = np.argmin(y_confs[case_3_indices], axis=1)
     return sens_pred, {1: case_1_indices, 2: case_2_indices, 3: case_3_indices}
 
-def get_CSMIA_case_by_case_results(clf, X_train, y_tr, ds, subgroup_col_name, metric='precision'):
-    sens_pred, case_indices = CSMIA_attack(clf, X_train, y_tr, ds.ds.meta)
+def get_CSMIA_case_by_case_results(clf, X_train, y_tr, ds, subgroup_col_name, metric='precision', attack_fun=None, **kwargs):
+    if attack_fun is None:
+        attack_fun = CSMIA_attack
+    if kwargs:
+        sens_pred, case_indices = attack_fun(clf, X_train, y_tr, ds.ds.meta, **kwargs)
+    else:
+        sens_pred, case_indices = attack_fun(clf, X_train, y_tr, ds.ds.meta)
     sensitive_col_name = f'{ds.ds.meta["sensitive_column"]}_1'
     correct_indices = (sens_pred == X_train[[sensitive_col_name]].to_numpy().ravel())
 
@@ -622,9 +631,19 @@ def get_CSMIA_case_by_case_results(clf, X_train, y_tr, ds, subgroup_col_name, me
         i: { j: eval_func((X_train.loc[subgroup_csmia_case_indices_by_subgroup_dict[i][j], sensitive_col_name], sens_pred[subgroup_csmia_case_indices_by_subgroup_dict[i][j]])) for j in [1, 0] } for i in [1, 2, 3, 'All Cases']
     }
 
+    overall_perf_by_cases_dict = {
+        i: eval_func((X_train.loc[case_indices[i]].loc[:, sensitive_col_name], sens_pred[case_indices[i]])) for i in [1, 2, 3]
+    }
+    overall_perf_by_cases_dict['All Cases'] = eval_func((X_train.loc[:, sensitive_col_name], sens_pred))
+
     temp_dict = {
         f'Case {i}': { j: f'{subgroup_csmia_case_indices_by_subgroup_dict[i][j].shape[0]} ({perf_dict[i][j]})' for j in [1, 0] } for i in [1, 2, 3, 'All Cases']
     }
+
+    for i in [1, 2, 3, 'All Cases']:
+        temp_dict[f'Case {i}']['Overall'] = overall_perf_by_cases_dict[i]
+
+    # print(temp_dict)
 
     # subgroup_csmia_case_correct_dict = {
     #     i: X_train.iloc[np.intersect1d(np.argwhere(case_indices[i]).ravel(), np.argwhere(correct_indices).ravel())][f'{subgroup_col_name}_1'].value_counts() for i in range(1, 4)
@@ -636,5 +655,6 @@ def get_CSMIA_case_by_case_results(clf, X_train, y_tr, ds, subgroup_col_name, me
     # temp_dict['All Cases'] = { j: f'{subgroup_csmia_case_dict[1][j] + subgroup_csmia_case_dict[2][j] + subgroup_csmia_case_dict[3][j]} ({round(100 * (subgroup_csmia_case_correct_dict[1][j] + subgroup_csmia_case_correct_dict[2][j] + subgroup_csmia_case_correct_dict[3][j]) / (subgroup_csmia_case_dict[1][j] + subgroup_csmia_case_dict[2][j] + subgroup_csmia_case_dict[3][j]), 2)})' for j in [1, 0] }
 
     temp_df = pd.DataFrame.from_dict(temp_dict, orient='index')
+    # temp_df['Overall'] = overall_perf_by_cases_dict
     return temp_df
 
