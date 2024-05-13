@@ -344,10 +344,12 @@ class CensusIncome:
             elif col in self.meta["cat_columns"] or col == self.meta["y_column"]:
                 # print()
                 np.random.seed(seed)
+                seed = seed+1
                 # x[col] = np.random.choice(unique_val_dict[col].tolist(), num, replace=True)
                 x[col] = np.random.choice(self.unique_values_dict[col], num, replace=True)
             elif col in self.meta["num_columns"]["minmaxscaler"]:
                 np.random.seed(seed)
+                seed = seed+1
                 # print(unique_val_dict[col][0], unique_val_dict[col][1])
                 # x[col] = [random.randint(unique_val_dict[col][0], unique_val_dict[col][1])] * 2
                 # x[col] = np.random.randint(unique_val_dict[col][0], unique_val_dict[col][1], size=num)
@@ -411,6 +413,96 @@ class CensusIncome:
         if split == "victim":
             return prepare_one_set(self.train_df_victim, self.test_df_victim)
         return prepare_one_set(self.train_df_adv, self.test_df_adv)
+
+    def sample_data_matching_correlation(
+        self,
+        data,
+        p1=None,
+        p2=None,
+        a=0,
+        m=1,
+        n=0,
+        subgroup_col_name=None,
+        transformed_already=False,
+        random_state=42
+    ):
+        if p1 is None:
+            p1 = {'Adult': -0.4, 'Census19': -0.1, 'Texas100': 0, 'GSS': -0.3, 'NLSY': -0.3}[self.name]
+        if p2 is None:
+            p2 = {'Adult': -0.4, 'Census19': -0.2, 'Texas100': -0.1, 'GSS': -0.4, 'NLSY': -0.4}[self.name]
+        replace_bool = {'Adult': True, 'Census19': False, 'Texas100': False, 'GSS': True, 'NLSY': True}[self.name]
+        # m = sampling_condition_dict_list["marginal_prior"]
+        # if m > 1:
+        #     m = 1 / m
+        if n==0:
+            n = self.meta["train_set_size_when_sampled_conditionally"]
+        # if subgroup_col_name is None:
+        #     subgroup_col_name = {'Adult': 'SEX', 'Census19': 'SEX', 'Texas100': 'ETHNICITY', 'GSS': 'TODO', 'NLSY': 'TODO'}[self.name]
+        sensitive_col_name = self.meta["sensitive_column"]
+        y_col_name = self.meta["y_column"]
+        y_values = self.meta["y_values"]
+        # y_values = [0, 1]
+        sensitive_values = self.meta["sensitive_values"]
+        subgroup_values = data[subgroup_col_name].unique().tolist()
+        subgroup_values.sort()
+        
+        if subgroup_col_name is not None:
+            a = 0
+            n = n // 2
+            num_of_samples_dict_train = { i: {} for i in [0, 1] }
+            num_of_samples_dict_train[0][(0, 1)] = int(sqrt(m) * (sqrt(m) - p1) * n / 2 / (m + 1))
+            num_of_samples_dict_train[0][(0, 0)] = int(sqrt(m) * (sqrt(m) + p1) * n / 2 / (m + 1))
+            num_of_samples_dict_train[0][(1, 1)] = n // 2 - num_of_samples_dict_train[0][(0, 1)]
+            num_of_samples_dict_train[0][(1, 0)] = n // 2 - num_of_samples_dict_train[0][(0, 0)]
+
+            num_of_samples_dict_train[1][(0, 1)] = int(sqrt(m) * (sqrt(m) - p2) * n / 2 / (m + 1))
+            num_of_samples_dict_train[1][(0, 0)] = int(sqrt(m) * (sqrt(m) + p2) * n / 2 / (m + 1))
+            num_of_samples_dict_train[1][(1, 1)] = n // 2 - num_of_samples_dict_train[1][(0, 1)]
+            num_of_samples_dict_train[1][(1, 0)] = n // 2 - num_of_samples_dict_train[1][(0, 0)]
+        else:
+            num_of_samples_dict_train = {}
+            num_of_samples_dict_train[(1, 1)] = int(sqrt(m) * (sqrt(m) + a) * n / 2 / (m + 1))
+            num_of_samples_dict_train[(1, 0)] = int(sqrt(m) * (sqrt(m) - a) * n / 2 / (m + 1))
+            num_of_samples_dict_train[(0, 1)] = n // 2 - num_of_samples_dict_train[(1, 1)]
+            num_of_samples_dict_train[(0, 0)] = n // 2 - num_of_samples_dict_train[(1, 0)]
+
+
+        if 'transformations' in self.meta and not transformed_already:
+            for transformation in self.meta['transformations']:
+                data = transformation(data)
+
+        indices_dict = {}
+        for i in tqdm(range(len(subgroup_values))):
+            for j in [0, 1]:
+                np.random.seed(random_state)
+                try:
+                    first_set_indices = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(0, j)]), replace=replace_bool).index
+                    
+                    second_set_indices = (
+                        data[(data[y_col_name] == y_values[1]) &
+                        (data[sensitive_col_name] == sensitive_values[j]) &
+                        (data[subgroup_col_name] == subgroup_values[i])]
+                        .sample(n=int(num_of_samples_dict_train[i][(1, j)]), replace=replace_bool)
+                        .index
+                    )
+
+                    indices_dict[(i, j)] = first_set_indices.append(second_set_indices)
+                except ValueError as e:
+                    print(data[[sensitive_col_name, subgroup_col_name, y_col_name]].value_counts())
+                    print(y_values)
+                    print(sensitive_values)
+                    print(subgroup_values)
+                    import sys
+                    sys.exit(1)
+
+        print(num_of_samples_dict_train)
+        
+        indices = np.concatenate([indices_dict[(i, j)] for i in range(len(subgroup_values)) for j in [0, 1]])
+        
+        sampled_data = data.loc[indices]
+        remaining_data = data.copy().drop(indices)
+
+        return sampled_data, remaining_data
 
     # Create adv/victim splits, normalize data, etc
     def load_data(self, test_ratio, random_state=42, sampling_condition_dict_list=None):
@@ -534,8 +626,8 @@ class CensusIncome:
 
             # mathematical way
             # getting the test set first (benign examples)
-            p1 = {'Adult': -0.4, 'Census19': -0.1, 'Texas100': 0, 'GSS': -0.3, 'NLSY': -0.3}[self.name]
-            p2 = {'Adult': -0.4, 'Census19': -0.2, 'Texas100': -0.1, 'GSS': -0.4, 'NLSY': -0.4}[self.name]
+            p1 = {'Adult': -0.4, 'Census19': -0.4, 'Texas100': 0, 'GSS': -0.3, 'NLSY': -0.3}[self.name]
+            p2 = {'Adult': -0.4, 'Census19': -0.4, 'Texas100': -0.1, 'GSS': -0.4, 'NLSY': -0.4}[self.name]
             replace_bool = {'Adult': True, 'Census19': False, 'Texas100': False, 'GSS': True, 'NLSY': True}[self.name]
             a = 0
             m = sampling_condition_dict_list["marginal_prior"]
@@ -575,7 +667,7 @@ class CensusIncome:
             n = self.meta["train_set_size_when_sampled_conditionally"]
             n = n // 2
             a = sampling_condition_dict_list["correlation"]
-            train_test_overlap = True
+            train_test_overlap = False
             num_of_samples_dict = { i: {} for i in [0, 1] }
             if train_test_overlap:
                 num_of_sample_tuples = [
@@ -794,10 +886,11 @@ class CensusIncome:
                             n_tries=100, class_col='income',
                             verbose=False)
     
-    def get_attack_df(self):
-        df = self.df.copy()
+    def get_attack_df(self, df=None):
+        if df is None:
+            df = self.df.copy()
 
-        df = df[df['is_train'] == 1]
+            df = df[df['is_train'] == 1]
 
         meta = self.meta
         # cols_to_drop = [meta["sensitive_column"] + "_" + x for x in meta["sensitive_values"] if x != meta["sensitive_positive"]]
@@ -819,7 +912,7 @@ class CensusIncome:
         # df.rename(columns={meta["sensitive_column"] + "_" + meta["sensitive_positive"]: meta["sensitive_column"]}, inplace=True)
         df.rename(columns={f'{meta["sensitive_column"]}_{meta["sensitive_positive"]}': meta["sensitive_column"]}, inplace=True)
 
-        X = df.drop(columns = [meta["sensitive_column"], "is_train"])
+        X = df.drop(columns = [meta["sensitive_column"]])
         y = df[meta["sensitive_column"]]
 
         self.X_attack, self.y_attack = X, y
@@ -959,7 +1052,7 @@ def heuristic(df, condition, ratio,
     return picked_df.reset_index(drop=True)
 
 
-def filter_random_data_by_conf_score(ds, clf, confidence_threshold=0.99, num_samples=100000, condition=None, seed=4):
+def filter_random_data_by_conf_score(ds, clf, confidence_threshold=0.99, num_samples=1000000, condition=None, seed=4, sample_by_corr=None):
     def oneHotCatVars(x, colname):
         df_1 = x.drop(columns=colname, axis=1)
         df_2 = pd.get_dummies(x[colname], prefix=colname, prefix_sep='_')
@@ -973,13 +1066,33 @@ def filter_random_data_by_conf_score(ds, clf, confidence_threshold=0.99, num_sam
     # get confidence scores from querying clf
     conf_scores = np.max(clf.predict_proba(X_random[default_cols]), axis=1)
 
+    # get predicted y value of 
+    y_values = np.argmax(clf.predict_proba(X_random[default_cols]), axis=1)
+
+    random_df[data_dict['y_column']] = pd.Series(y_values, index=random_df.index).apply(lambda x: data_dict['y_values'][x])
+
     # find indices with confidence > confidence_threshold
     indices = np.nonzero(conf_scores > confidence_threshold)[0]
 
     # filter out the data points with confidence < confidence_threshold
     random_df = random_df.iloc[indices]
     random_oh_df = random_oh_df.iloc[indices]
-    return random_df, random_oh_df
+
+    p1 = -0.4 if sample_by_corr is None else sample_by_corr[0]
+    p2 = -0.4 if sample_by_corr is None else sample_by_corr[1]
+    sampled_df = ds.ds.sample_data_matching_correlation(random_df, p1=p1, p2=p2, subgroup_col_name='SEX', transformed_already=True, n=100000)[0]
+    sampled_df_oh = sampled_df.copy()
+    sampled_df_oh = ds.ds.process_df(sampled_df_oh)
+
+    # if any column is missing in xp that is present in self.train_df, add it and set it to 0
+    for col in ds.ds.train_df.columns:
+        if col not in sampled_df_oh.columns:
+            sampled_df_oh[col] = 0
+
+    # # order columns in xp in the same order as self.train_df
+    # xp = xp[self.train_df.columns]
+    
+    return sampled_df, sampled_df_oh
 
 
 

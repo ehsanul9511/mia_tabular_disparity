@@ -278,13 +278,17 @@ def get_model_representations(folder_path, label, first_n=np.inf,
 
 def get_model(max_iter=40,
               hidden_layer_sizes=(32, 16, 8),
-              random_state=42):
+              random_state=42,
+              verbose=False,
+              learning_rate='constant'):
     """
         Create new MLPClassifier model
     """
     clf = MLPClassifier(hidden_layer_sizes=hidden_layer_sizes,
                         max_iter=max_iter,
-                        random_state=random_state)
+                        random_state=random_state,
+                        verbose=verbose,
+                        learning_rate=learning_rate)
     return clf
 
 
