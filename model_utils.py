@@ -103,6 +103,9 @@ class PortedMLPClassifier(nn.Module):
 
         return latents
 
+    def predict_proba(self, x: ch.Tensor):
+        return self.forward(x)
+
     
 # def train_torch_model(model=None, X=None, y=None, epochs=100, lr=0.01):
 #     """

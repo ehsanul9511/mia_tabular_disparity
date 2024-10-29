@@ -1,6 +1,8 @@
 import data_utils
+from model_utils import get_model
 import pandas as pd
 from sklearn.feature_selection import mutual_info_classif
+from sklearn.metrics import roc_curve, auc, roc_auc_score, accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 
 
 
@@ -19,11 +21,16 @@ class MIAExperiment:
         self.ds = data_utils.CensusWrapper(
                     filter_prop="none", ratio=float(0.5), split="all", name=self.name, sampling_condition_dict_list=self.sampling_condition_dict_list, sensitive_column=self.sensitive_column,
                     additional_meta=None)
+        # print(self.sampling_condition_dict_list)
+        # print(self.ds.ds.filenameroot)
         (self.x_tr, self.y_tr), (self.x_te, self.y_te), self.cols = self.ds.load_data()
         self.X_train = pd.DataFrame(self.x_tr, columns=self.cols)
         self.X_test = pd.DataFrame(self.x_te, columns=self.cols)
         self.y_tr_onehot = self.ds.ds.y_enc.transform(self.y_tr).toarray()
         self.y_te_onehot = self.ds.ds.y_enc.transform(self.y_te).toarray()
+
+        if not hasattr(self, 'hidden_layer_sizes'):
+            self.hidden_layer_sizes = None
 
     def __str__(self):
         return self.ds.ds.filenameroot
@@ -57,3 +64,29 @@ class MIAExperiment:
             # print(mutual_info_classif(X, y, discrete_features=True))
             mutual_info_dict[value] = mutual_info_classif(X, y, discrete_features=True)
         return mutual_info_dict
+
+    def get_base_model(self):
+        if self.hidden_layer_sizes is None:
+            return model_utils.get_model(max_iter=500)
+        else:
+            return model_utils.get_model(max_iter=500, hidden_layer_sizes=self.hidden_layer_sizes)
+
+    def score(self, sens_true, sens_pred, metric='accuracy'):
+        pos_label = self.ds.ds.meta['sensitive_values'].index(self.ds.ds.meta['sensitive_positive'])
+
+        def false_positive_rate(x, y, pos_label=pos_label):
+            tp, fn, fp, tn = confusion_matrix(x, y).ravel()
+            return round(fp / (fp + tn), 4)
+
+        def accuracy(x, y, pos_label=None):
+            return accuracy_score(x, y)
+
+        eval_func = {
+            'precision': precision_score,
+            'recall': recall_score,
+            'f1': f1_score,
+            'accuracy': accuracy,
+            'fpr': false_positive_rate
+        }
+
+        return round(100 * eval_func[metric](sens_true, sens_pred, pos_label=pos_label), 2)

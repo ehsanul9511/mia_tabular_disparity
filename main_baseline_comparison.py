@@ -143,6 +143,8 @@ def imputation_attack(experiment, aux_count=5000):
     inv_clf = model_utils.get_model(max_iter=40)
     inv_clf.fit(X_attack_aux, y_sens_aux_onehot)
 
+    y_pred = np.argmax(clf.predict(X_attack_orig), axis=1)
+
     result_dict = get_disparity_by_subgroup(attack_type='INV', ds=experiment.ds, subgroup_columns=['SEX'], X_att_query=X_attack_orig, y_att_query=y_sens_orig, metric='accuracy', clf = inv_clf)
     experiment.inv_clf = inv_clf
 

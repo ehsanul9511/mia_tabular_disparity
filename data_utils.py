@@ -62,7 +62,7 @@ class CensusIncome:
                 "y_values": ['<=50K', '>50K'],
                 "sensitive_column": "marital",
                 "sensitive_values": ["Married", "Single"],
-                "sensitive_positive": "Married",
+                "sensitive_positive": "Single",
                 "train_set_size_when_sampled_conditionally": 20000,
             }
         elif name == "Texas100":
@@ -254,6 +254,9 @@ class CensusIncome:
         for c in minmax_scale_cols:
             self.min_dict[c] = df[c].min()
             self.max_dict[c] = df[c].max()
+            
+            self.mean_dict[c] = df[c].mean()
+            self.std_dict[c] = df[c].std()
 
         self.unique_values_dict = {}
         for c in self.meta["cat_columns"] + [self.meta["y_column"]]:
@@ -421,20 +424,22 @@ class CensusIncome:
         p2=None,
         a=0,
         m=1,
-        n=0,
+        n=None,
+        p=None,
         subgroup_col_name=None,
         transformed_already=False,
+        return_indices_only=False,
         random_state=42
     ):
-        if p1 is None:
-            p1 = {'Adult': -0.4, 'Census19': -0.1, 'Texas100': 0, 'GSS': -0.3, 'NLSY': -0.3}[self.name]
-        if p2 is None:
-            p2 = {'Adult': -0.4, 'Census19': -0.2, 'Texas100': -0.1, 'GSS': -0.4, 'NLSY': -0.4}[self.name]
+        # if p1 is None:
+        #     p1 = {'Adult': -0.4, 'Census19': -0.1, 'Texas100': 0, 'GSS': -0.3, 'NLSY': -0.3}[self.name]
+        # if p2 is None:
+        #     p2 = {'Adult': -0.4, 'Census19': -0.2, 'Texas100': -0.1, 'GSS': -0.4, 'NLSY': -0.4}[self.name]
         replace_bool = {'Adult': True, 'Census19': False, 'Texas100': False, 'GSS': True, 'NLSY': True}[self.name]
         # m = sampling_condition_dict_list["marginal_prior"]
         # if m > 1:
         #     m = 1 / m
-        if n==0:
+        if n is None:
             n = self.meta["train_set_size_when_sampled_conditionally"]
         # if subgroup_col_name is None:
         #     subgroup_col_name = {'Adult': 'SEX', 'Census19': 'SEX', 'Texas100': 'ETHNICITY', 'GSS': 'TODO', 'NLSY': 'TODO'}[self.name]
@@ -445,24 +450,48 @@ class CensusIncome:
         sensitive_values = self.meta["sensitive_values"]
         subgroup_values = data[subgroup_col_name].unique().tolist()
         subgroup_values.sort()
+        print(subgroup_values)
+
+        if p1 is not None or p2 is not None:
+            p = [p1, p2]
+            n = [n // 2] * 2
+        elif p is None:
+            p1 = {'Adult': -0.4, 'Census19': -0.1, 'Texas100': 0, 'GSS': -0.3, 'NLSY': -0.3}[self.name]
+            p2 = {'Adult': -0.4, 'Census19': -0.2, 'Texas100': -0.1, 'GSS': -0.4, 'NLSY': -0.4}[self.name]
+            p = [p1, p2]
+            n = [n // 2] * 2
+        elif not isinstance(p, list):
+            p = [p] * len(subgroup_values)
+            n = [n // len(subgroup_values)] * len(subgroup_values)
         
+        if not isinstance(m, list):
+            m = [m] * len(subgroup_values)
+        print(n)
         if subgroup_col_name is not None:
             a = 0
-            n = n // 2
-            num_of_samples_dict_train = { i: {} for i in [0, 1] }
-            num_of_samples_dict_train[0][(0, 1)] = int(sqrt(m) * (sqrt(m) - p1) * n / 2 / (m + 1))
-            num_of_samples_dict_train[0][(0, 0)] = int(sqrt(m) * (sqrt(m) + p1) * n / 2 / (m + 1))
-            num_of_samples_dict_train[0][(1, 1)] = n // 2 - num_of_samples_dict_train[0][(0, 1)]
-            num_of_samples_dict_train[0][(1, 0)] = n // 2 - num_of_samples_dict_train[0][(0, 0)]
+            # num_of_samples_dict_train = { i: {} for i in range(len(subgroup_values) }
+            num_of_samples_dict_train = {}
+            for i in range(len(subgroup_values)):
+                num_of_samples_dict_train[i] = {}
+                num_of_samples_dict_train[i][(0, 1)] = int(sqrt(m[i]) * (sqrt(m[i]) - p[i]) * n[i] / 2 / (m[i] + 1))
+                num_of_samples_dict_train[i][(0, 0)] = int(sqrt(m[i]) * (sqrt(m[i]) + p[i]) * n[i] / 2 / (m[i] + 1))
+                num_of_samples_dict_train[i][(1, 1)] = n[i] // 2 - num_of_samples_dict_train[i][(0, 1)]
+                num_of_samples_dict_train[i][(1, 0)] = n[i] // 2 - num_of_samples_dict_train[i][(0, 0)]
 
-            num_of_samples_dict_train[1][(0, 1)] = int(sqrt(m) * (sqrt(m) - p2) * n / 2 / (m + 1))
-            num_of_samples_dict_train[1][(0, 0)] = int(sqrt(m) * (sqrt(m) + p2) * n / 2 / (m + 1))
-            num_of_samples_dict_train[1][(1, 1)] = n // 2 - num_of_samples_dict_train[1][(0, 1)]
-            num_of_samples_dict_train[1][(1, 0)] = n // 2 - num_of_samples_dict_train[1][(0, 0)]
+
+            # num_of_samples_dict_train[0][(0, 1)] = int(sqrt(m) * (sqrt(m) - p1) * n / 2 / (m + 1))
+            # num_of_samples_dict_train[0][(0, 0)] = int(sqrt(m) * (sqrt(m) + p1) * n / 2 / (m + 1))
+            # num_of_samples_dict_train[0][(1, 1)] = n // 2 - num_of_samples_dict_train[0][(0, 1)]
+            # num_of_samples_dict_train[0][(1, 0)] = n // 2 - num_of_samples_dict_train[0][(0, 0)]
+
+            # num_of_samples_dict_train[1][(0, 1)] = int(sqrt(m) * (sqrt(m) - p2) * n / 2 / (m + 1))
+            # num_of_samples_dict_train[1][(0, 0)] = int(sqrt(m) * (sqrt(m) + p2) * n / 2 / (m + 1))
+            # num_of_samples_dict_train[1][(1, 1)] = n // 2 - num_of_samples_dict_train[1][(0, 1)]
+            # num_of_samples_dict_train[1][(1, 0)] = n // 2 - num_of_samples_dict_train[1][(0, 0)]
         else:
             num_of_samples_dict_train = {}
-            num_of_samples_dict_train[(1, 1)] = int(sqrt(m) * (sqrt(m) + a) * n / 2 / (m + 1))
-            num_of_samples_dict_train[(1, 0)] = int(sqrt(m) * (sqrt(m) - a) * n / 2 / (m + 1))
+            num_of_samples_dict_train[(1, 1)] = int(sqrt(m[i]) * (sqrt(m[i]) + a) * n / 2 / (m[i] + 1))
+            num_of_samples_dict_train[(1, 0)] = int(sqrt(m[i]) * (sqrt(m[i]) - a) * n / 2 / (m[i] + 1))
             num_of_samples_dict_train[(0, 1)] = n // 2 - num_of_samples_dict_train[(1, 1)]
             num_of_samples_dict_train[(0, 0)] = n // 2 - num_of_samples_dict_train[(1, 0)]
 
@@ -471,6 +500,7 @@ class CensusIncome:
             for transformation in self.meta['transformations']:
                 data = transformation(data)
 
+        print(num_of_samples_dict_train)
         indices_dict = {}
         for i in tqdm(range(len(subgroup_values))):
             for j in [0, 1]:
@@ -489,15 +519,19 @@ class CensusIncome:
                     indices_dict[(i, j)] = first_set_indices.append(second_set_indices)
                 except ValueError as e:
                     print(data[[sensitive_col_name, subgroup_col_name, y_col_name]].value_counts())
-                    print(y_values)
-                    print(sensitive_values)
-                    print(subgroup_values)
+                    # print(y_values)
+                    # print(sensitive_values)
+                    # print(subgroup_values)
+                    # indices_dict[(i, j)] = data[data[subgroup_col_name]==subgroup_values[i]].index
+                    # continue
                     import sys
                     sys.exit(1)
 
-        print(num_of_samples_dict_train)
         
         indices = np.concatenate([indices_dict[(i, j)] for i in range(len(subgroup_values)) for j in [0, 1]])
+
+        if return_indices_only:
+            return indices
         
         sampled_data = data.loc[indices]
         remaining_data = data.copy().drop(indices)
@@ -528,16 +562,23 @@ class CensusIncome:
         # sample until correlation between sensitive attribute and subgroup is close to the threshold
         elif isinstance(sampling_condition_dict_list, dict) and "subgroup_col_name" in sampling_condition_dict_list.keys() and "corr_btn_sens_and_output_per_subgroup" not in sampling_condition_dict_list.keys():
             data = pd.read_csv(self.meta["data_path"]) if "data_path" in self.meta else pd.read_csv(self.meta["train_data_path"])
-
             subgroup_col_name = sampling_condition_dict_list["subgroup_col_name"]
-            subgroup_values = data[subgroup_col_name].unique().tolist()
-            subgroup_values.sort()
+
+            if "subgroup_values" in sampling_condition_dict_list.keys():
+                subgroup_values = sampling_condition_dict_list["subgroup_values"]
+                data = data[data[subgroup_col_name].isin(subgroup_values)]
+            else:
+                subgroup_values = data[subgroup_col_name].unique().tolist()
+                subgroup_values.sort()
             y_col_name = self.meta["y_column"]
             y_values = self.meta["y_values"]
             sensitive_col_name = self.meta["sensitive_column"]
             sensitive_values = self.meta["sensitive_values"]
 
-            correlation_by_subgroup_values = {'Adult': [-0.4, -0.4], 'Census19': [-0.1, -0.4], 'Texas100': [0, -0.1], 'GSS': [-0.3, -0.4], 'NLSY': [-0.3, -0.4]}[self.name] if "correlation_by_subgroup_values" not in sampling_condition_dict_list and len(subgroup_values) == 2 else sampling_condition_dict_list["correlation_by_subgroup_values"] if "correlation_by_subgroup_values" in sampling_condition_dict_list else np.arange(0, -0.5, -0.5/len(subgroup_values))
+            lowest_correlation_val = {'Census19': 0, 'Texas100': 0}[self.name]
+            highest_correlation_val = {'Census19': -0.5, 'Texas100': 0.5}[self.name]
+
+            correlation_by_subgroup_values = {'Adult': [-0.4, -0.4], 'Census19': [-0.1, -0.4], 'Texas100': [0, -0.1], 'GSS': [-0.3, -0.4], 'NLSY': [-0.3, -0.4]}[self.name] if "correlation_by_subgroup_values" not in sampling_condition_dict_list and len(subgroup_values) == 2 else sampling_condition_dict_list["correlation_by_subgroup_values"] if "correlation_by_subgroup_values" in sampling_condition_dict_list else np.arange(lowest_correlation_val, highest_correlation_val, (highest_correlation_val-lowest_correlation_val)/len(subgroup_values))
 
             num_of_samples_dict = {i: {} for i in range(len(subgroup_values))}
             n = sampling_condition_dict_list["n"] if "n" in sampling_condition_dict_list else 2000
@@ -623,11 +664,16 @@ class CensusIncome:
 
         elif isinstance(sampling_condition_dict_list, dict) and len(sampling_condition_dict_list) >= 3 and "correlation" in sampling_condition_dict_list.keys():
             data = pd.read_csv(self.meta["data_path"]) if "data_path" in self.meta else pd.read_csv(self.meta["train_data_path"])
+            
+            if 'transformations' in self.meta:
+                for transformation in self.meta['transformations']:
+                    data = transformation(data)
+                self.transformed_already = True
 
             # mathematical way
             # getting the test set first (benign examples)
             p1 = {'Adult': -0.4, 'Census19': -0.4, 'Texas100': 0, 'GSS': -0.3, 'NLSY': -0.3}[self.name]
-            p2 = {'Adult': -0.4, 'Census19': -0.4, 'Texas100': -0.1, 'GSS': -0.4, 'NLSY': -0.4}[self.name]
+            p2 = {'Adult': -0.4, 'Census19': -0.4, 'Texas100': 0.1, 'GSS': -0.4, 'NLSY': -0.4}[self.name]
             replace_bool = {'Adult': True, 'Census19': False, 'Texas100': False, 'GSS': True, 'NLSY': True}[self.name]
             a = 0
             m = sampling_condition_dict_list["marginal_prior"]
@@ -641,6 +687,7 @@ class CensusIncome:
             sensitive_values = self.meta["sensitive_values"]
             subgroup_values = data[subgroup_col_name].unique().tolist()
             subgroup_values.sort()
+            print(subgroup_values)
             if "corr_btn_sens_and_output_per_subgroup" in sampling_condition_dict_list:
                 a = 0
                 n = n // 2
@@ -703,18 +750,18 @@ class CensusIncome:
             print(num_of_samples_dict)
 
 
-            if 'transformations' in self.meta:
-                for transformation in self.meta['transformations']:
-                    data = transformation(data)
-                self.transformed_already = True
 
             indices_dict = {}
             test_indices_dict = {}
             for i in tqdm(range(len(subgroup_values))):
                 for j in [0, 1]:
                     np.random.seed(random_state)
-                    first_set_indices = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(0, j)]), replace=replace_bool).index
-                    second_set_indices = data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(1, j)]), replace=replace_bool).index
+                    # first_set_indices = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(0, j)]), replace=replace_bool).index
+                    first_set_indices = data[data[y_col_name]==y_values[j]][data[sensitive_col_name]==sensitive_values[0]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(0, j)]), replace=replace_bool).index
+
+                    # second_set_indices = data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(1, j)]), replace=replace_bool).index
+                    second_set_indices = data[data[y_col_name]==y_values[j]][data[sensitive_col_name]==sensitive_values[1]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(1, j)]), replace=replace_bool).index
+
                     indices_dict[(i, j)] = first_set_indices.append(second_set_indices)
                     test_indices_dict[(i, j)] = first_set_indices[:num_of_samples_dict[i][(0, j)]].append(second_set_indices[:num_of_samples_dict[i][(1,j)]])
                     # indices_dict[(i, j)] = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(0, j)]), replace=replace_bool).index.append(data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(1, j)]), replace=replace_bool).index)
@@ -779,9 +826,12 @@ class CensusIncome:
         else:
             data = pd.read_csv(self.meta["data_path"])
             # randomly sample 100,000 data points
-            data = data.sample(n=100000, random_state=random_state)
+            data = data.sample(n=200000, random_state=random_state)
             # split into train/test
             train_data, test_data = train_test_split(data, test_size=test_ratio, random_state=random_state)
+            self.meta['transformations'] = self.meta['transformations'][:1] + self.meta['transformations'][2:]
+            self.meta['transformations'].append(lambda df: df.assign(MAR=df['MAR'].apply(lambda x: 0 if x == 0 else 1 if x in [1, 2] else 2)))
+            self.meta['sensitive_values'] = [0, 1, 2]
 
         
         # randomly mutate the sensitive attribute value for a subset of the data
