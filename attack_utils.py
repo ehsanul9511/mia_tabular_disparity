@@ -460,6 +460,8 @@ def get_CSMIA_case_by_case_results(clf, X_train, y_tr, ds, subgroup_col_name, me
     }
     overall_perf_by_cases_dict['All Cases'] = eval_func((X_train.loc[:, sensitive_col_name], sens_pred))
 
+    # return perf_dict['All Cases']
+
     temp_dict = {
         f'Case {i}': { j: f'{subgroup_csmia_case_indices_by_subgroup_dict[i][j].shape[0]} ({perf_dict[i][j]})' for j in subgroup_vals } for i in [1, 2, 3, 'All Cases']
     }
