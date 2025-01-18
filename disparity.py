@@ -27,7 +27,7 @@ import pickle
 subgroup_col_name = 'RAC1P'
 split_ratio_first_subgroup = 0.5
 
-sampling_condition_dict_list = [
+sampling_condition_dict = [
     {
         'condition': lambda x: x[subgroup_col_name] < 2,
         'sample_size': round(split_ratio_first_subgroup * 100000),
@@ -42,7 +42,7 @@ sampling_condition_dict_list = [
 #             filter_prop="none", ratio=float(0.5), split="all", name="Census19")
 
 ds = data_utils.CensusWrapper(
-            filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict_list=sampling_condition_dict_list, sensitive_column='DEAR')
+            filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict=sampling_condition_dict, sensitive_column='DEAR')
 (x_tr, y_tr), (x_te, y_te), cols = ds.load_data()
 X_train = pd.DataFrame(x_tr, columns=cols)
 y_tr_onehot = ds.ds.y_enc.transform(y_tr).toarray()
@@ -75,7 +75,7 @@ def LOMIA(all_sensitive_columns = ['MAR', 'DEAR', 'DEYE', 'DREM', 'DPHY'], metri
 
     for sensitive_column in all_sensitive_columns:
         temp_ds = data_utils.CensusWrapper(
-                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict_list=sampling_condition_dict_list, sensitive_column=sensitive_column)
+                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict=sampling_condition_dict, sensitive_column=sensitive_column)
         temp_ds.ds.filenameroot = temp_ds.ds.name + f"_{subgroup_col_name}_{round(100*split_ratio_first_subgroup)}_{round(100*(1-split_ratio_first_subgroup))}_minority_categorized"
         X, y = temp_ds.ds.get_attack_df()
 
@@ -99,7 +99,7 @@ def INV(all_sensitive_columns = ['MAR', 'DEAR', 'DEYE', 'DREM', 'DPHY'], metric=
 
     for sensitive_column in all_sensitive_columns:
         temp_ds = data_utils.CensusWrapper(
-                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict_list=sampling_condition_dict_list, sensitive_column=sensitive_column)
+                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict=sampling_condition_dict, sensitive_column=sensitive_column)
         temp_ds.ds.filenameroot = temp_ds.ds.name + f"_{subgroup_col_name}_{round(100*split_ratio_first_subgroup)}_{round(100*(1-split_ratio_first_subgroup))}_minority_categorized"
         X, y = temp_ds.ds.get_attack_df()
 
@@ -138,7 +138,7 @@ def GRAD(all_sensitive_columns = ['default', 'DEAR', 'DEYE', 'DREM', 'DPHY'], me
 
     for sens_col in all_sensitive_columns:
         temp_ds = data_utils.CensusWrapper(
-                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict_list=sampling_condition_dict_list, sensitive_column=sens_col)
+                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict=sampling_condition_dict, sensitive_column=sens_col)
         temp_ds.ds.filenameroot = temp_ds.ds.name + f"_{subgroup_col_name}_{round(100*split_ratio_first_subgroup)}_{round(100*(1-split_ratio_first_subgroup))}_minority_categorized"
         X, y = temp_ds.ds.get_attack_df()
 
@@ -169,7 +169,7 @@ def PCA_attack(all_sensitive_columns = ['default', 'DEAR', 'DEYE', 'DREM', 'DPHY
 
     for sensitive_column in all_sensitive_columns:
         temp_ds = data_utils.CensusWrapper(
-                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict_list=sampling_condition_dict_list, sensitive_column=sensitive_column)
+                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict=sampling_condition_dict, sensitive_column=sensitive_column)
         temp_ds.ds.filenameroot = temp_ds.ds.name + f"_{subgroup_col_name}_{round(100*split_ratio_first_subgroup)}_{round(100*(1-split_ratio_first_subgroup))}_minority_categorized"
         X, y = temp_ds.ds.get_attack_df()
 
@@ -211,7 +211,7 @@ def CSMIA(all_sensitive_columns = ['MAR', 'DEAR', 'DEYE', 'DREM', 'DPHY'], metri
 
     for sensitive_column in all_sensitive_columns:
         temp_ds = data_utils.CensusWrapper(
-                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict_list=sampling_condition_dict_list, sensitive_column=sensitive_column)
+                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict=sampling_condition_dict, sensitive_column=sensitive_column)
         temp_ds.ds.filenameroot = temp_ds.ds.name + f"_{subgroup_col_name}_{round(100*split_ratio_first_subgroup)}_{round(100*(1-split_ratio_first_subgroup))}_minority_categorized"
         X, y = temp_ds.ds.get_attack_df()
 
@@ -235,7 +235,7 @@ def NEUR(all_sensitive_columns = ['MAR', 'DEAR', 'DEYE', 'DREM', 'DPHY'], metric
 
     for sensitive_column in all_sensitive_columns:
         temp_ds = data_utils.CensusWrapper(
-                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict_list=sampling_condition_dict_list, sensitive_column=sensitive_column)
+                filter_prop="none", ratio=float(0.5), split="all", name="Census19", sampling_condition_dict=sampling_condition_dict, sensitive_column=sensitive_column)
         temp_ds.ds.filenameroot = temp_ds.ds.name + f"_{subgroup_col_name}_{round(100*split_ratio_first_subgroup)}_{round(100*(1-split_ratio_first_subgroup))}_minority_categorized"
         X, y = temp_ds.ds.get_attack_df()
 

@@ -10,7 +10,7 @@ from sklearn.metrics import roc_curve, auc, roc_auc_score, accuracy_score, preci
 
 class MIAExperiment:
     def __init__(self, *args, **kwargs):
-        self.sampling_condition_dict_list = kwargs.get('sampling_condition_dict_list', None)
+        self.sampling_condition_dict = kwargs.get('sampling_condition_dict', None)
         self.sensitive_column = kwargs.get('sensitive_column', 'MAR')
 
         for key, value in kwargs.items():
@@ -18,10 +18,12 @@ class MIAExperiment:
 
         if not hasattr(self, 'name'):
             self.name = 'Census19'
+        if not hasattr(self, 'random_state'):
+            self.random_state = 42
         self.ds = data_utils.CensusWrapper(
-                    filter_prop="none", ratio=float(0.5), split="all", name=self.name, sampling_condition_dict_list=self.sampling_condition_dict_list, sensitive_column=self.sensitive_column,
-                    additional_meta=None)
-        # print(self.sampling_condition_dict_list)
+                    filter_prop="none", ratio=float(0.5), split="all", name=self.name, sampling_condition_dict=self.sampling_condition_dict, sensitive_column=self.sensitive_column,
+                    additional_meta=None, random_state=self.random_state)
+        # print(self.sampling_condition_dict)
         # print(self.ds.ds.filenameroot)
         (self.x_tr, self.y_tr), (self.x_te, self.y_te), self.cols = self.ds.load_data()
         self.X_train = pd.DataFrame(self.x_tr, columns=self.cols)

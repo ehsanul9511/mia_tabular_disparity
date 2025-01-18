@@ -23,7 +23,7 @@ class KeyDefaultDict(defaultdict):
 
 # US Income dataset
 class CensusIncome:
-    def __init__(self, name="Adult", path=BASE_DATA_DIR, sensitive_column="default", preload=True, sampling_condition_dict_list=None, additional_meta=None):
+    def __init__(self, name="Adult", path=BASE_DATA_DIR, sensitive_column="default", preload=True, sampling_condition_dict=None, additional_meta=None, random_state=42):
         # self.urls = [
         #     "http://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
         #     "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.names",
@@ -171,7 +171,7 @@ class CensusIncome:
                 "train_set_size_when_sampled_conditionally": 500,
             }
 
-        self.sampling_condition_dict_list = sampling_condition_dict_list
+        self.sampling_condition_dict = sampling_condition_dict
         self.additional_meta = additional_meta
         if additional_meta is not None:
             for key, value in additional_meta.items():
@@ -185,17 +185,17 @@ class CensusIncome:
         # self.download_dataset()
         # self.load_data(test_ratio=0.4)
         if preload:
-            self.load_data(test_ratio=0.5, sampling_condition_dict_list=sampling_condition_dict_list)
+            self.load_data(test_ratio=0.5, sampling_condition_dict=sampling_condition_dict, random_state=random_state)
 
-        self.generate_filename_root()
+        self.generate_filename_root(random_state=random_state)
 
-    def generate_filename_root(self):
+    def generate_filename_root(self, random_state=42):
         # get subgroup column name and split ratio from globals
-        # it's not in sampling_condition_dict_list because it's not a sampling condition
+        # it's not in sampling_condition_dict because it's not a sampling condition
         # but first check if they exist in globals
-        if self.sampling_condition_dict_list is not None and isinstance(self.sampling_condition_dict_list, dict):
+        if self.sampling_condition_dict is not None and isinstance(self.sampling_condition_dict, dict):
             name = self.name
-            for key, value in self.sampling_condition_dict_list.items():
+            for key, value in self.sampling_condition_dict.items():
                 name += f"_{key}_{value}"
         elif ("subgroup_col_name" not in globals() or "split_ratio_first_subgroup" not in globals()):
             if self.name == "Census19":
@@ -214,6 +214,8 @@ class CensusIncome:
                 name += f"_{key}_{value}"
 
         self.filenameroot = name
+
+        self.filenameroot += f"_rs{random_state}"
 
         # replace any special characters with short forms
         self.filenameroot = self.filenameroot.replace("(", "LPAREN")
@@ -436,9 +438,6 @@ class CensusIncome:
         # if p2 is None:
         #     p2 = {'Adult': -0.4, 'Census19': -0.2, 'Texas100': -0.1, 'GSS': -0.4, 'NLSY': -0.4}[self.name]
         replace_bool = {'Adult': True, 'Census19': False, 'Texas100': False, 'GSS': True, 'NLSY': True}[self.name]
-        # m = sampling_condition_dict_list["marginal_prior"]
-        # if m > 1:
-        #     m = 1 / m
         if n is None:
             n = self.meta["train_set_size_when_sampled_conditionally"]
         # if subgroup_col_name is None:
@@ -539,7 +538,7 @@ class CensusIncome:
         return sampled_data, remaining_data
 
     # Create adv/victim splits, normalize data, etc
-    def load_data(self, test_ratio, random_state=42, sampling_condition_dict_list=None):
+    def load_data(self, test_ratio, random_state=42, sampling_condition_dict=None):
         # Load train, test data
         # train_data = pd.read_csv(os.path.join(self.path, 'adult.data'),
         #                          names=self.columns, sep=' *, *',
@@ -547,25 +546,25 @@ class CensusIncome:
         # test_data = pd.read_csv(os.path.join(self.path, 'adult.test'),
         #                         names=self.columns, sep=' *, *', skiprows=1,
         #                         na_values='?', engine='python')
-        if "train_data_path" in self.meta and "test_data_path" in self.meta and sampling_condition_dict_list is None:
+        if "train_data_path" in self.meta and "test_data_path" in self.meta and sampling_condition_dict is None:
             train_data = pd.read_csv(self.meta["train_data_path"])
             test_data = pd.read_csv(self.meta["test_data_path"])
-        # sampling_condition_dict_list is a list of dictionaries, each dictionary contains a condition and a sample size
-        elif isinstance(sampling_condition_dict_list, list) and len(sampling_condition_dict_list) > 0 and isinstance(sampling_condition_dict_list[0], dict):
+        # sampling_condition_dict is a list of dictionaries, each dictionary contains a condition and a sample size
+        elif isinstance(sampling_condition_dict, list) and len(sampling_condition_dict) > 0 and isinstance(sampling_condition_dict[0], dict):
             data = pd.read_csv(self.meta["data_path"])
             sampled_data = None
-            for condition_dict in sampling_condition_dict_list:
+            for condition_dict in sampling_condition_dict:
                 sampled_data = pd.concat([sampled_data, data[condition_dict['condition'](data)].sample(n=condition_dict['sample_size'], random_state=random_state)])
             # split into train/test
             train_data, test_data = train_test_split(sampled_data, test_size=test_ratio, random_state=random_state)
-        # sampling_condition_dict_list is a dictionary and the dictionary has two keys, "correlation" and "subgroup_col_name" and the values are the correlation threshold and the subgroup column name
+        # sampling_condition_dict is a dictionary and the dictionary has two keys, "correlation" and "subgroup_col_name" and the values are the correlation threshold and the subgroup column name
         # sample until correlation between sensitive attribute and subgroup is close to the threshold
-        elif isinstance(sampling_condition_dict_list, dict) and "subgroup_col_name" in sampling_condition_dict_list.keys() and "corr_btn_sens_and_output_per_subgroup" not in sampling_condition_dict_list.keys():
+        elif isinstance(sampling_condition_dict, dict) and "subgroup_col_name" in sampling_condition_dict.keys() and "corr_btn_sens_and_output_per_subgroup" not in sampling_condition_dict.keys():
             data = pd.read_csv(self.meta["data_path"]) if "data_path" in self.meta else pd.read_csv(self.meta["train_data_path"])
-            subgroup_col_name = sampling_condition_dict_list["subgroup_col_name"]
+            subgroup_col_name = sampling_condition_dict["subgroup_col_name"]
 
-            if "subgroup_values" in sampling_condition_dict_list.keys():
-                subgroup_values = sampling_condition_dict_list["subgroup_values"]
+            if "subgroup_values" in sampling_condition_dict.keys():
+                subgroup_values = sampling_condition_dict["subgroup_values"]
                 data = data[data[subgroup_col_name].isin(subgroup_values)]
             else:
                 subgroup_values = data[subgroup_col_name].unique().tolist()
@@ -578,11 +577,11 @@ class CensusIncome:
             lowest_correlation_val = {'Census19': 0, 'Texas100': 0}[self.name]
             highest_correlation_val = {'Census19': -0.5, 'Texas100': 0.5}[self.name]
 
-            correlation_by_subgroup_values = {'Adult': [-0.4, -0.4], 'Census19': [-0.1, -0.4], 'Texas100': [0, -0.1], 'GSS': [-0.3, -0.4], 'NLSY': [-0.3, -0.4]}[self.name] if "correlation_by_subgroup_values" not in sampling_condition_dict_list and len(subgroup_values) == 2 else sampling_condition_dict_list["correlation_by_subgroup_values"] if "correlation_by_subgroup_values" in sampling_condition_dict_list else np.arange(lowest_correlation_val, highest_correlation_val, (highest_correlation_val-lowest_correlation_val)/len(subgroup_values))
+            correlation_by_subgroup_values = {'Adult': [-0.4, -0.4], 'Census19': [-0.1, -0.4], 'Texas100': [0, -0.1], 'GSS': [-0.3, -0.4], 'NLSY': [-0.3, -0.4]}[self.name] if "correlation_by_subgroup_values" not in sampling_condition_dict and len(subgroup_values) == 2 else sampling_condition_dict["correlation_by_subgroup_values"] if "correlation_by_subgroup_values" in sampling_condition_dict else np.arange(lowest_correlation_val, highest_correlation_val, (highest_correlation_val-lowest_correlation_val)/len(subgroup_values))
 
             num_of_samples_dict = {i: {} for i in range(len(subgroup_values))}
-            n = sampling_condition_dict_list["n"] if "n" in sampling_condition_dict_list else 2000
-            m = sampling_condition_dict_list["marginal_prior"] if "marginal_prior" in sampling_condition_dict_list else 1
+            n = sampling_condition_dict["n"] if "n" in sampling_condition_dict else 2000
+            m = sampling_condition_dict["marginal_prior"] if "marginal_prior" in sampling_condition_dict else 1
 
             if 'transformations' in self.meta:
                 for transformation in self.meta['transformations']:
@@ -622,7 +621,7 @@ class CensusIncome:
                         num_of_samples_dict[i][(1, j)] = int(num_of_samples_dict[i][(1, j)] * scaling_factor)
                         print(f'after scaling: {num_of_samples_dict[i][(1, j)]} {negative_val_count} {num_of_samples_dict[i][(1, j)] / negative_val_count}')
 
-                    indices_dict[(i, j)] = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(0, j)]), replace=True).index.append(data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(1, j)]), replace=True).index)
+                    indices_dict[(i, j)] = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(0, j)]), replace=True, random_state=random_state).index.append(data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(1, j)]), replace=True, random_state=random_state).index)
 
 
 
@@ -662,7 +661,7 @@ class CensusIncome:
             # create test data by sampling from remaining data with the same size as train data
             test_data = remaining_data.sample(n=len(train_data), random_state=random_state)
 
-        elif isinstance(sampling_condition_dict_list, dict) and len(sampling_condition_dict_list) >= 3 and "correlation" in sampling_condition_dict_list.keys():
+        elif isinstance(sampling_condition_dict, dict) and len(sampling_condition_dict) >= 3 and "correlation" in sampling_condition_dict.keys():
             data = pd.read_csv(self.meta["data_path"]) if "data_path" in self.meta else pd.read_csv(self.meta["train_data_path"])
             
             if 'transformations' in self.meta:
@@ -676,11 +675,11 @@ class CensusIncome:
             p2 = {'Adult': -0.4, 'Census19': -0.4, 'Texas100': 0.1, 'GSS': -0.4, 'NLSY': -0.4}[self.name]
             replace_bool = {'Adult': True, 'Census19': False, 'Texas100': False, 'GSS': True, 'NLSY': True}[self.name]
             a = 0
-            m = sampling_condition_dict_list["marginal_prior"]
+            m = sampling_condition_dict["marginal_prior"]
             if m > 1:
                 m = 1 / m
             n = self.meta["train_set_size_when_sampled_conditionally"]
-            subgroup_col_name = sampling_condition_dict_list["subgroup_col_name"]
+            subgroup_col_name = sampling_condition_dict["subgroup_col_name"]
             sensitive_col_name = self.meta["sensitive_column"]
             y_col_name = self.meta["y_column"]
             y_values = self.meta["y_values"]
@@ -688,7 +687,7 @@ class CensusIncome:
             subgroup_values = data[subgroup_col_name].unique().tolist()
             subgroup_values.sort()
             print(subgroup_values)
-            if "corr_btn_sens_and_output_per_subgroup" in sampling_condition_dict_list:
+            if "corr_btn_sens_and_output_per_subgroup" in sampling_condition_dict:
                 a = 0
                 n = n // 2
                 num_of_samples_dict_train = { i: {} for i in [0, 1] }
@@ -709,11 +708,11 @@ class CensusIncome:
                 num_of_samples_dict_train[(0, 0)] = n // 2 - num_of_samples_dict_train[(1, 0)]
 
 
-            p1 = sampling_condition_dict_list["corr_btn_sens_and_output_per_subgroup"][0]
-            p2 = sampling_condition_dict_list["corr_btn_sens_and_output_per_subgroup"][1]
+            p1 = sampling_condition_dict["corr_btn_sens_and_output_per_subgroup"][0]
+            p2 = sampling_condition_dict["corr_btn_sens_and_output_per_subgroup"][1]
             n = self.meta["train_set_size_when_sampled_conditionally"]
             n = n // 2
-            a = sampling_condition_dict_list["correlation"]
+            a = sampling_condition_dict["correlation"]
             train_test_overlap = False
             num_of_samples_dict = { i: {} for i in [0, 1] }
             if train_test_overlap:
@@ -1000,9 +999,9 @@ class CensusIncome:
 
 # Wrapper for easier access to dataset
 class CensusWrapper:
-    def __init__(self, filter_prop="none", ratio=0.5, split="all", name="Adult", sensitive_column="default", preload=True, sampling_condition_dict_list=None, additional_meta=None):
+    def __init__(self, filter_prop="none", ratio=0.5, split="all", name="Adult", sensitive_column="default", preload=True, sampling_condition_dict=None, additional_meta=None, random_state=42):
         self.name = name
-        self.ds = CensusIncome(name=name, sensitive_column=sensitive_column, preload=preload, sampling_condition_dict_list=sampling_condition_dict_list, additional_meta=additional_meta)
+        self.ds = CensusIncome(name=name, sensitive_column=sensitive_column, preload=preload, sampling_condition_dict=sampling_condition_dict, additional_meta=additional_meta, random_state=random_state)
         self.split = split
         self.ratio = ratio
         self.filter_prop = filter_prop

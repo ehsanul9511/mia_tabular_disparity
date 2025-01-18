@@ -40,7 +40,7 @@ mpl.rcParams['font.weight'] = 'light'
 
 class MIAExperiment:
     def __init__(self, *args, **kwargs):
-        self.sampling_condition_dict_list = kwargs.get('sampling_condition_dict_list', None)
+        self.sampling_condition_dict = kwargs.get('sampling_condition_dict', None)
         self.sensitive_column = kwargs.get('sensitive_column', 'MAR')
 
         for key, value in kwargs.items():
@@ -49,7 +49,7 @@ class MIAExperiment:
         if not hasattr(self, 'name'):
             self.name = 'Census19'
         self.ds = data_utils.CensusWrapper(
-                    filter_prop="none", ratio=float(0.5), split="all", name=self.name, sampling_condition_dict_list=self.sampling_condition_dict_list, sensitive_column=self.sensitive_column,
+                    filter_prop="none", ratio=float(0.5), split="all", name=self.name, sampling_condition_dict=self.sampling_condition_dict, sensitive_column=self.sensitive_column,
                     additional_meta=None)
         (self.x_tr, self.y_tr), (self.x_te, self.y_te), self.cols = self.ds.load_data()
         self.X_train = pd.DataFrame(self.x_tr, columns=self.cols)
@@ -91,7 +91,7 @@ class MIAExperiment:
         return mutual_info_dict
 
 
-experiments = { f"corr_btn_sens_and_out_{(i, j)}":  MIAExperiment(sampling_condition_dict_list = 
+experiments = { f"corr_btn_sens_and_out_{(i, j)}":  MIAExperiment(sampling_condition_dict = 
     {
             'correlation': 0,
             'subgroup_col_name': 'SEX',
