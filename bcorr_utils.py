@@ -35,15 +35,56 @@ mpl.rcParams['font.size'] = 8
 mpl.rcParams['font.weight'] = 'light'
 
 
-def bcorr_training(experiment, X_train, y_tr):
-    original_test_df = experiment.ds.ds.original_df[experiment.ds.ds.original_df['is_train']==0].copy().reset_index(drop=True).drop(['is_train'], axis=1)
+def bcorr_sampling(experiment, X_train, y_tr, y_tr_onehot, subgroup_col_name, p=-0.1):
+    sensitive_col_name, sensitive_positive, y_column = experiment.ds.ds.meta['sensitive_column'], experiment.ds.ds.meta['sensitive_positive'], experiment.ds.ds.meta['y_column']
 
-    p = -0.1
-    x = original_test_df[original_test_df['SEX']==0][['MAR', 'PINCP']].value_counts().to_numpy().min()
-    n = (x * 4) // (1 + p)
+    df = X_train.copy()
+    df[y_column] = y_tr.ravel()
+    subgroup_values = [col.split('_')[-1] for col in df.columns if col.startswith(subgroup_col_name)]
+    # x = df[df['SEX']==0][['MAR', 'PINCP']].value_counts().to_numpy().min()
+    # n = (x * 4) // (1 + p)
+    n = [df[df[f"{subgroup_col_name}_{val}"]==1][[f'{sensitive_col_name}_{sensitive_positive}', y_column]].value_counts().to_numpy().min() * 4 for val in subgroup_values]
+    p = [p] * len(subgroup_values)
 
-    temp_indices = experiment.ds.ds.sample_data_matching_correlation(original_test_df, p1=-0.1, p2=-0.1, n=2*n, subgroup_col_name='SEX', transformed_already=True, return_indices_only=True)
+    sample_indices = experiment.ds.ds.sample_indices_matching_correlation(X_train, y_tr, p=p, n=n, subgroup_col_name='SEX', random_state=experiment.random_state)
 
-    experiment.X_test_balanced_corr = experiment.X_test.loc[temp_indices].reset_index(drop=True)
-    experiment.y_te_balanced_corr = experiment.y_te[temp_indices]
-    experiment.y_te_onehot_balanced_corr = experiment.y_te_onehot[temp_indices]
+    X_train_balanced_corr = X_train.loc[sample_indices].reset_index(drop=True)
+    y_tr_balanced_corr = y_tr[sample_indices]
+    y_tr_onehot_balanced_corr = y_tr_onehot[sample_indices]
+
+    return X_train_balanced_corr, y_tr_balanced_corr, y_tr_onehot_balanced_corr
+
+
+def evaluate(experiment, clf, X_train, y_tr, X_test, y_te, subgroup_col_name):
+    y_te_pred = np.argmax(clf.predict_proba(X_test), axis=1)
+
+    subgroup_oh_cols = [col for col in X_train.columns if subgroup_col_name in col]
+    subgroup_vals_tr = X_train[subgroup_oh_cols].to_numpy().argmax(axis=1)
+    subgroup_vals_te = X_test[subgroup_oh_cols].to_numpy().argmax(axis=1)
+
+    sensitive_columns = [f'{experiment.ds.ds.meta["sensitive_column"]}_{i}' for i in experiment.ds.ds.meta["sensitive_values"]]
+    sens_val_ground_truth = X_train[sensitive_columns].idxmax(axis=1).str.replace(f'{experiment.ds.ds.meta["sensitive_column"]}_', '')
+    sens_val_ground_truth = sens_val_ground_truth.astype(experiment.ds.ds.original_df[experiment.ds.ds.meta["sensitive_column"]].dtype)
+    sens_val_ground_truth = np.array([{x: i for i, x in enumerate(experiment.ds.ds.meta["sensitive_values"])}[val] for val in sens_val_ground_truth])
+
+    sens_pred, case_indices = CSMIA_attack(clf, X_train, y_tr, experiment.ds.ds.meta)
+    sens_pred_LOMIA = LOMIA_attack(experiment, clf, X_train, y_tr, experiment.ds.ds.meta)
+
+
+    correct_indices = (sens_pred == sens_val_ground_truth)
+    correct_indices_LOMIA = (sens_pred_LOMIA == sens_val_ground_truth)
+    
+    num_of_subgroups = len(subgroup_oh_cols)
+    # return [correct_indices[subgroup_vals_te==i].mean() for i in range(51)]
+    perf_dict = {
+        'ASRD_CSMIA': round(100 * np.ptp([correct_indices[subgroup_vals_tr==i].mean() for i in range(num_of_subgroups)]), 2),
+        'ASRD_LOMIA': round(100 * np.ptp([correct_indices_LOMIA[subgroup_vals_tr==i].mean() for i in range(num_of_subgroups)]), 2),
+        'EOD': round(equalized_odds_difference(y_te.ravel(), y_te_pred, sensitive_features=subgroup_vals_te), 4),
+        'DPD': round(demographic_parity_difference(y_te.ravel(), y_te_pred, sensitive_features=subgroup_vals_te), 4),
+        'MA': 100 * accuracy_score(y_te.ravel()[:], y_te_pred[:])
+    }
+
+    return perf_dict
+
+
+
