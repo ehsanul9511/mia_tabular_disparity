@@ -1,12 +1,20 @@
 import data_utils
 from model_utils import get_model
 import pandas as pd
+import numpy as np
 from sklearn.feature_selection import mutual_info_classif
 from sklearn.metrics import roc_curve, auc, roc_auc_score, accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
+import re
 
+def get_perf(input_string):
+    # Use regular expression to extract the number inside parenthesis
+    match = re.search(r'\(([\d.]+)\)', input_string)
 
-
-
+    if match:
+        extracted_number = match.group(1)
+        return(float(extracted_number))
+    else:
+        return(np.nan)
 
 class MIAExperiment:
     def __init__(self, *args, **kwargs):
@@ -30,6 +38,12 @@ class MIAExperiment:
         self.X_test = pd.DataFrame(self.x_te, columns=self.cols)
         self.y_tr_onehot = self.ds.ds.y_enc.transform(self.y_tr).toarray()
         self.y_te_onehot = self.ds.ds.y_enc.transform(self.y_te).toarray()
+
+        sensitive_columns = [f'{self.ds.ds.meta["sensitive_column"]}_{i}' for i in self.ds.ds.meta["sensitive_values"]]
+        self.sens_val_ground_truth = self.X_train[sensitive_columns].idxmax(axis=1).str.replace(f'{self.ds.ds.meta["sensitive_column"]}_', '')
+        self.sens_val_ground_truth = self.sens_val_ground_truth.astype(self.ds.ds.original_df[self.ds.ds.meta["sensitive_column"]].dtype)
+        self.sens_val_ground_truth = np.array([{x: i for i, x in enumerate(self.ds.ds.meta["sensitive_values"])}[val] for val in self.sens_val_ground_truth])
+        # self.sens_vals_ground_truth = self.X_train[f'{self.sensitive_column}_{self.ds.ds.meta["sensitive_positive"]}']
 
         if not hasattr(self, 'hidden_layer_sizes'):
             self.hidden_layer_sizes = None

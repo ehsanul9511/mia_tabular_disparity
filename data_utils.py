@@ -215,7 +215,8 @@ class CensusIncome:
 
         self.filenameroot = name
 
-        self.filenameroot += f"_rs{random_state}"
+        if self.name in ["Census19", "Texas100"]:
+            self.filenameroot += f"_rs{random_state}"
 
         # replace any special characters with short forms
         self.filenameroot = self.filenameroot.replace("(", "LPAREN")
@@ -550,6 +551,7 @@ class CensusIncome:
             train_data = pd.read_csv(self.meta["train_data_path"])
             test_data = pd.read_csv(self.meta["test_data_path"])
         # sampling_condition_dict is a list of dictionaries, each dictionary contains a condition and a sample size
+        # FINAL-TODO: don't need this condition
         elif isinstance(sampling_condition_dict, list) and len(sampling_condition_dict) > 0 and isinstance(sampling_condition_dict[0], dict):
             data = pd.read_csv(self.meta["data_path"])
             sampled_data = None
@@ -559,7 +561,7 @@ class CensusIncome:
             train_data, test_data = train_test_split(sampled_data, test_size=test_ratio, random_state=random_state)
         # sampling_condition_dict is a dictionary and the dictionary has two keys, "correlation" and "subgroup_col_name" and the values are the correlation threshold and the subgroup column name
         # sample until correlation between sensitive attribute and subgroup is close to the threshold
-        elif isinstance(sampling_condition_dict, dict) and "subgroup_col_name" in sampling_condition_dict.keys() and "corr_btn_sens_and_output_per_subgroup" not in sampling_condition_dict.keys():
+        elif isinstance(sampling_condition_dict, dict) and "subgroup_col_name" in sampling_condition_dict.keys():
             data = pd.read_csv(self.meta["data_path"]) if "data_path" in self.meta else pd.read_csv(self.meta["train_data_path"])
             subgroup_col_name = sampling_condition_dict["subgroup_col_name"]
 
@@ -597,6 +599,8 @@ class CensusIncome:
                 num_of_samples_dict[i][(1, 1)] = n // 2 - num_of_samples_dict[i][(0, 1)]
                 num_of_samples_dict[i][(1, 0)] = n // 2 - num_of_samples_dict[i][(0, 0)]
 
+                print(num_of_samples_dict)
+
 
                 for j in [0, 1]:
                     positive_val_count = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].shape[0]
@@ -621,7 +625,7 @@ class CensusIncome:
                         num_of_samples_dict[i][(1, j)] = int(num_of_samples_dict[i][(1, j)] * scaling_factor)
                         print(f'after scaling: {num_of_samples_dict[i][(1, j)]} {negative_val_count} {num_of_samples_dict[i][(1, j)] / negative_val_count}')
 
-                    indices_dict[(i, j)] = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(0, j)]), replace=True, random_state=random_state).index.append(data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(1, j)]), replace=True, random_state=random_state).index)
+                    indices_dict[(i, j)] = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(0, j)]), replace=False, random_state=random_state).index.append(data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(1, j)]), replace=False, random_state=random_state).index)
 
 
 
@@ -661,7 +665,7 @@ class CensusIncome:
             # create test data by sampling from remaining data with the same size as train data
             test_data = remaining_data.sample(n=len(train_data), random_state=random_state)
 
-        elif isinstance(sampling_condition_dict, dict) and len(sampling_condition_dict) >= 3 and "correlation" in sampling_condition_dict.keys():
+        elif isinstance(sampling_condition_dict, dict) and "correlation" in sampling_condition_dict.keys():
             data = pd.read_csv(self.meta["data_path"]) if "data_path" in self.meta else pd.read_csv(self.meta["train_data_path"])
             
             if 'transformations' in self.meta:
@@ -669,159 +673,35 @@ class CensusIncome:
                     data = transformation(data)
                 self.transformed_already = True
 
-            # mathematical way
-            # getting the test set first (benign examples)
-            p1 = {'Adult': -0.4, 'Census19': -0.4, 'Texas100': 0, 'GSS': -0.3, 'NLSY': -0.3}[self.name]
-            p2 = {'Adult': -0.4, 'Census19': -0.4, 'Texas100': 0.1, 'GSS': -0.4, 'NLSY': -0.4}[self.name]
-            replace_bool = {'Adult': True, 'Census19': False, 'Texas100': False, 'GSS': True, 'NLSY': True}[self.name]
-            a = 0
-            m = sampling_condition_dict["marginal_prior"]
-            if m > 1:
-                m = 1 / m
+            a = sampling_condition_dict["correlation"] if "correlation" in sampling_condition_dict else 0
+            m = sampling_condition_dict["marginal_prior"] if "marginal_prior" in sampling_condition_dict else 1
             n = self.meta["train_set_size_when_sampled_conditionally"]
-            subgroup_col_name = sampling_condition_dict["subgroup_col_name"]
+            
             sensitive_col_name = self.meta["sensitive_column"]
             y_col_name = self.meta["y_column"]
             y_values = self.meta["y_values"]
             sensitive_values = self.meta["sensitive_values"]
-            subgroup_values = data[subgroup_col_name].unique().tolist()
-            subgroup_values.sort()
-            print(subgroup_values)
-            if "corr_btn_sens_and_output_per_subgroup" in sampling_condition_dict:
-                a = 0
-                n = n // 2
-                num_of_samples_dict_train = { i: {} for i in [0, 1] }
-                num_of_samples_dict_train[0][(0, 1)] = int(sqrt(m) * (sqrt(m) - p1) * n / 2 / (m + 1))
-                num_of_samples_dict_train[0][(0, 0)] = int(sqrt(m) * (sqrt(m) + p1) * n / 2 / (m + 1))
-                num_of_samples_dict_train[0][(1, 1)] = n // 2 - num_of_samples_dict_train[0][(0, 1)]
-                num_of_samples_dict_train[0][(1, 0)] = n // 2 - num_of_samples_dict_train[0][(0, 0)]
-
-                num_of_samples_dict_train[1][(0, 1)] = int(sqrt(m) * (sqrt(m) - p2) * n / 2 / (m + 1))
-                num_of_samples_dict_train[1][(0, 0)] = int(sqrt(m) * (sqrt(m) + p2) * n / 2 / (m + 1))
-                num_of_samples_dict_train[1][(1, 1)] = n // 2 - num_of_samples_dict_train[1][(0, 1)]
-                num_of_samples_dict_train[1][(1, 0)] = n // 2 - num_of_samples_dict_train[1][(0, 0)]
-            else:
-                num_of_samples_dict_train = {}
-                num_of_samples_dict_train[(1, 1)] = int(sqrt(m) * (sqrt(m) + a) * n / 2 / (m + 1))
-                num_of_samples_dict_train[(1, 0)] = int(sqrt(m) * (sqrt(m) - a) * n / 2 / (m + 1))
-                num_of_samples_dict_train[(0, 1)] = n // 2 - num_of_samples_dict_train[(1, 1)]
-                num_of_samples_dict_train[(0, 0)] = n // 2 - num_of_samples_dict_train[(1, 0)]
-
-
-            p1 = sampling_condition_dict["corr_btn_sens_and_output_per_subgroup"][0]
-            p2 = sampling_condition_dict["corr_btn_sens_and_output_per_subgroup"][1]
-            n = self.meta["train_set_size_when_sampled_conditionally"]
-            n = n // 2
-            a = sampling_condition_dict["correlation"]
-            train_test_overlap = False
-            num_of_samples_dict = { i: {} for i in [0, 1] }
-            if train_test_overlap:
-                num_of_sample_tuples = [
-                    (int(sqrt(m) * (sqrt(m) - p1) * n / 2 / (m + 1)), num_of_samples_dict_train[0][(0, 1)]),
-                    (int(sqrt(m) * (sqrt(m) + p1) * n / 2 / (m + 1)), num_of_samples_dict_train[0][(0, 0)]),
-                    (n//2 - int(sqrt(m) * (sqrt(m) - p1) * n / 2 / (m + 1)), num_of_samples_dict_train[0][(1, 1)]),
-                    (n//2 - int(sqrt(m) * (sqrt(m) + p1) * n / 2 / (m + 1)), num_of_samples_dict_train[0][(1, 0)]),
-                    (int(sqrt(m) * (sqrt(m) - p2) * n / 2 / (m + 1)), num_of_samples_dict_train[1][(0, 1)]),
-                    (int(sqrt(m) * (sqrt(m) + p2) * n / 2 / (m + 1)), num_of_samples_dict_train[1][(0, 0)]),
-                    (n//2 - int(sqrt(m) * (sqrt(m) - p2) * n / 2 / (m + 1)), num_of_samples_dict_train[1][(1, 1)]),
-                    (n//2 - int(sqrt(m) * (sqrt(m) + p2) * n / 2 / (m + 1)), num_of_samples_dict_train[1][(1, 0)])
-                ]
-                num_of_sample_ratios = [num_of_sample_tuple[0] / num_of_sample_tuple[1] for num_of_sample_tuple in num_of_sample_tuples]
-                argmax_index = np.argmax(num_of_sample_ratios)
-                scale_down_factor = num_of_sample_ratios[argmax_index]
-                print(f'num_of_sample_tuples: {num_of_sample_tuples}')
-                print(f'scale_down_factor: {scale_down_factor}')
-            else:
-                scale_down_factor = 1
-
-            num_of_samples_dict = ({i: {} for i in range(len(subgroup_values))})
-
-            num_of_samples_dict[0][(0, 1)] = int(sqrt(m) * (sqrt(m) - p1) * n / 2 / (m + 1)/scale_down_factor)
-            num_of_samples_dict[0][(0, 0)] = int(sqrt(m) * (sqrt(m) + p1) * n / 2 / (m + 1)/scale_down_factor)
-            num_of_samples_dict[0][(1, 1)] = int((n//2 - int(sqrt(m) * (sqrt(m) - p1) * n / 2 / (m + 1)))/scale_down_factor)
-            num_of_samples_dict[0][(1, 0)] = int((n//2 - int(sqrt(m) * (sqrt(m) + p1) * n / 2 / (m + 1)))/scale_down_factor)
-
-            num_of_samples_dict[1][(0, 1)] = int(sqrt(m) * (sqrt(m) - p2) * n / 2 / (m + 1)/scale_down_factor)
-            num_of_samples_dict[1][(0, 0)] = int(sqrt(m) * (sqrt(m) + p2) * n / 2 / (m + 1)/scale_down_factor)
-            num_of_samples_dict[1][(1, 1)] = int((n//2 - int(sqrt(m) * (sqrt(m) - p2) * n / 2 / (m + 1)))/scale_down_factor)
-            num_of_samples_dict[1][(1, 0)] = int((n//2 - int(sqrt(m) * (sqrt(m) + p2) * n / 2 / (m + 1)))/scale_down_factor)
-
-            print(num_of_samples_dict)
-
-
+            
+            num_of_samples_dict_train = {}
+            num_of_samples_dict_train[(1, 1)] = int(sqrt(m) * (sqrt(m) + a) * n / 2 / (m + 1))
+            num_of_samples_dict_train[(1, 0)] = int(sqrt(m) * (sqrt(m) - a) * n / 2 / (m + 1))
+            num_of_samples_dict_train[(0, 1)] = n // 2 - num_of_samples_dict_train[(1, 1)]
+            num_of_samples_dict_train[(0, 0)] = n // 2 - num_of_samples_dict_train[(1, 0)]
 
             indices_dict = {}
-            test_indices_dict = {}
-            for i in tqdm(range(len(subgroup_values))):
-                for j in [0, 1]:
-                    np.random.seed(random_state)
-                    # first_set_indices = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(0, j)]), replace=replace_bool).index
-                    first_set_indices = data[data[y_col_name]==y_values[j]][data[sensitive_col_name]==sensitive_values[0]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(0, j)]), replace=replace_bool).index
+            for j in [0, 1]:
+                first_set_indices = data[data[y_col_name]==y_values[j]][data[sensitive_col_name]==sensitive_values[0]].sample(n=int(num_of_samples_dict_train[(0, j)]), replace=False, random_state=random_state).index
+                second_set_indices = data[data[y_col_name]==y_values[j]][data[sensitive_col_name]==sensitive_values[1]].sample(n=int(num_of_samples_dict_train[(1, j)]), replace=False, random_state=random_state).index
 
-                    # second_set_indices = data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(1, j)]), replace=replace_bool).index
-                    second_set_indices = data[data[y_col_name]==y_values[j]][data[sensitive_col_name]==sensitive_values[1]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(1, j)]), replace=replace_bool).index
-
-                    indices_dict[(i, j)] = first_set_indices.append(second_set_indices)
-                    test_indices_dict[(i, j)] = first_set_indices[:num_of_samples_dict[i][(0, j)]].append(second_set_indices[:num_of_samples_dict[i][(1,j)]])
-                    # indices_dict[(i, j)] = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(0, j)]), replace=replace_bool).index.append(data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(1, j)]), replace=replace_bool).index)
+                indices_dict[j] = first_set_indices.append(second_set_indices)
             print(num_of_samples_dict_train)
             
-            indices = np.concatenate([indices_dict[(i, j)] for i in range(len(subgroup_values)) for j in [0, 1]])
+            indices = np.concatenate([indices_dict[j] for j in [0, 1]])
             self.train_data_indices = indices
             train_data = data.loc[indices]
             # test_data = data.loc[indices]
             remaining_data = data.copy().drop(indices)
-
-            # getting the training set (adversarial examples)
-
-            if not train_test_overlap:
-                indices_dict = {}
-            for i in tqdm(range(len(subgroup_values))):
-                try:
-                    for j in [0, 1]:
-                        np.random.seed(random_state)
-                        if train_test_overlap:
-                            indices_dict[(i, j)] = indices_dict[(i, j)][:num_of_samples_dict[i][(0,j)]].append(indices_dict[(i, j)][-num_of_samples_dict[i][(1,j)]:])
-                        else:
-                            indices_dict[(i, j)] = remaining_data[remaining_data[y_col_name]==y_values[0]][remaining_data[sensitive_col_name]==sensitive_values[j]][remaining_data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(0, j)]), replace=replace_bool).index.append(remaining_data[remaining_data[y_col_name]==y_values[1]][remaining_data[sensitive_col_name]==sensitive_values[j]][remaining_data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(1, j)]), replace=replace_bool).index)
-                except:
-                    print(f'excpetion: {i} {j}')
-                    while True:
-                        for j in [0, 1]:
-                            for k in [0, 1]:
-                                num_of_samples_dict[i][(j, k)] = int(num_of_samples_dict[i][(j, k)] * 0.9)
-                        try:
-                            for j in [0, 1]:
-                                np.random.seed(random_state)
-                                indices_dict[(i, j)] = remaining_data[remaining_data[y_col_name]==y_values[0]][remaining_data[sensitive_col_name]==sensitive_values[j]][remaining_data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(0, j)]), replace=replace_bool).index.append(remaining_data[remaining_data[y_col_name]==y_values[1]][remaining_data[sensitive_col_name]==sensitive_values[j]][remaining_data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(1, j)]), replace=replace_bool).index)
-                            break
-                        except:
-                            continue
-                # for j in [0, 1]:
-                #     indices_dict[(i, j)] = remaining_data[remaining_data[y_col_name]==y_values[0]][remaining_data[sensitive_col_name]==sensitive_values[j]][remaining_data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(0, j)]), replace=replace_bool).index.append(remaining_data[remaining_data[y_col_name]==y_values[1]][remaining_data[sensitive_col_name]==sensitive_values[j]][remaining_data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(1, j)]), replace=replace_bool).index)
-            # print(num_of_samples_dict)
-
-            indices = np.concatenate([indices_dict[(i, j)] for i in range(len(subgroup_values)) for j in [0, 1]])
-            # self.train_data_indices = indices
-            # train_data = remaining_data.loc[indices]
-            if train_test_overlap:
-                test_data = data.loc[indices]
-            else:
-                test_data = remaining_data.loc[indices]
-            # shuffle the data
-            # train_data = train_data.sample(frac=1, random_state=random_state, replace=False)
-            # this line is temporary
-            # subgroup_col_name = {'Adult': subgroup_col_name, 'Census19': subgroup_col_name, 'Texas100': 'ADMITTING_DIAGNOSIS', 'GSS': subgroup_col_name, 'NLSY': subgroup_col_name}[self.name]
-            # indices_dict = {}
-            # for i in remaining_data[subgroup_col_name].unique():
-            #     for j in [0, 1]:
-            #         total_num = len(remaining_data[remaining_data[subgroup_col_name]==i][remaining_data[y_col_name]==y_values[j]])
-            #         indices_dict[(i, j)] = remaining_data[remaining_data[subgroup_col_name]==i][remaining_data[y_col_name]==y_values[j]].sample(n=min(total_num, 500), replace=False).index
-
-            # indices = np.concatenate([indices_dict[(i, j)] for i in remaining_data[subgroup_col_name].unique() for j in [0, 1]])
-            # test_data = remaining_data.loc[indices]
-            # train_data = remaining_data.loc[indices]
-            # train_data = pd.concat([train_data, remaining_data.loc[indices]], axis=0)
+            test_data = remaining_data.sample(n=len(train_data), random_state=random_state)
         else:
             data = pd.read_csv(self.meta["data_path"])
             # randomly sample 100,000 data points

@@ -27,56 +27,58 @@ import pickle
 import copy
 from scipy.stats import kendalltau, spearmanr
 
-def get_subgroup_vals_sorted_by_risk_imputation(experiment, aux_df, subgroup_col_name = 'occupation', is_train=1, metric='accuracy'):
-    imputation_pred_test = imputation_attack(experiment, aux_df_onehot=aux_df, subgroup_column='occupation', pred_on_train=False, is_train=is_train)
-    
-    aux_ground_truth = aux_df[[f'{experiment.sensitive_column}_{experiment.sensitive_positive}']].to_numpy().ravel()
-    correlation_vs_ang_diff = {}
+def get_subgroup_vals_sorted_by_risk_imputation(experiment, X_aux, y_aux, subgroup_col_name, metric='accuracy'):
+    imputation_pred = imputation_attack(experiment, X_aux, y_aux, X_aux, y_aux, experiment.ds.ds.meta)
+
+    sensitive_columns = [f'{experiment.ds.ds.meta["sensitive_column"]}_{i}' for i in experiment.ds.ds.meta["sensitive_values"]]
+    aux_sens_val_ground_truth = X_aux[sensitive_columns].idxmax(axis=1).str.replace(f'{experiment.ds.ds.meta["sensitive_column"]}_', '')
+    aux_sens_val_ground_truth = aux_sens_val_ground_truth.astype(experiment.ds.ds.original_df[experiment.ds.ds.meta["sensitive_column"]].dtype)
+    aux_sens_val_ground_truth = np.array([{x: i for i, x in enumerate(experiment.ds.ds.meta["sensitive_values"])}[val] for val in aux_sens_val_ground_truth])
+    performance_by_subgroup_dict = {}
     subgroup_vals = experiment.ds.ds.original_df[subgroup_col_name].unique()
     for i in subgroup_vals:
         condition = {subgroup_col_name: i}
         fcondition = f'{condition}'
-        correlation_vs_ang_diff[fcondition] = {}
-        indices = get_indices_by_group_condition(aux_df, condition)
-        correlation_vs_ang_diff[fcondition]['subgroup_val'] = i
-        correlation_vs_ang_diff[fcondition]['indices_count'] = len(indices)
-        # correlation_vs_ang_diff[fcondition]['imputation_performance'] = accuracy_score(aux_ground_truth[indices], imputation_pred_test[indices])
-        correlation_vs_ang_diff[fcondition]['imputation_performance'] = experiment.score(aux_ground_truth[indices], imputation_pred_test[indices], metric=metric)
+        performance_by_subgroup_dict[fcondition] = {}
+        indices = get_indices_by_group_condition(X_aux, condition)
+        performance_by_subgroup_dict[fcondition]['subgroup_val'] = i
+        performance_by_subgroup_dict[fcondition]['indices_count'] = len(indices)
+        # performance_by_subgroup_dict[fcondition]['imputation_performance'] = accuracy_score(aux_sens_val_ground_truth[indices], imputation_pred[indices])
+        performance_by_subgroup_dict[fcondition]['imputation_performance'] = experiment.score(aux_sens_val_ground_truth[indices], imputation_pred[indices], metric=metric)
 
-    correlation_vs_ang_diff_df = pd.DataFrame.from_dict(correlation_vs_ang_diff, orient='index')
+    performance_by_subgroup_df = pd.DataFrame.from_dict(performance_by_subgroup_dict, orient='index')
 
-    # print(correlation_vs_ang_diff_df)
-    occupation_vals_sorted_imputation = correlation_vs_ang_diff_df.sort_values(by='imputation_performance', ascending=False)[['subgroup_val']].to_numpy().ravel()
+    subgroup_vals_sorted_imputation = performance_by_subgroup_df.sort_values(by='imputation_performance', ascending=False)[['subgroup_val']].to_numpy().ravel()
 
-    return occupation_vals_sorted_imputation
+    return subgroup_vals_sorted_imputation
 
-def single_attribute_based_targeted_imputation(experiment, aux_df, subgroup_col_name = 'occupation', is_train=1, kappas=[1, 0.5, 0.375, 0.25, 0.1, 0.05], metric='accuracy'):
-    occupation_vals_sorted_imputation = get_subgroup_vals_sorted_by_risk_imputation(experiment, aux_df, subgroup_col_name=subgroup_col_name, metric=metric).tolist()
+def single_attribute_based_targeted_imputation(experiment, X_target, y_target, X_aux, y_aux, subgroup_col_name, kappas=[1, 0.5, 0.375, 0.25, 0.1, 0.05], metric='accuracy'):
+    subgroup_vals_sorted_imputation = get_subgroup_vals_sorted_by_risk_imputation(experiment, X_aux, y_aux, subgroup_col_name=subgroup_col_name, metric=metric).tolist()
 
-    imputation_pred = imputation_attack(experiment, aux_df_onehot=aux_df, subgroup_column='occupation', is_train=is_train)
+    imputation_pred = imputation_attack(experiment, X_target, y_target, X_aux, y_aux, experiment.ds.ds.meta)
 
-    targeted_attack_by_state_dict = {}
+    performance_by_subgroup_dict = {}
     # sensitive_column_index = list(experiment.X_train.columns).index(f'{experiment.sensitive_column}_1')
-    conditions = [{subgroup_col_name: occupation_vals_sorted_imputation[:i+1]} for i in range(len(occupation_vals_sorted_imputation))]
+    conditions = [{subgroup_col_name: subgroup_vals_sorted_imputation[:i+1]} for i in range(len(subgroup_vals_sorted_imputation))]
     cumul_frac_of_total_records = [len(get_indices_by_group_condition(experiment.X_train, condition))/experiment.X_train.shape[0] for condition in conditions]
     # return cumul_frac_of_total_records
     for i in kappas:
         j = np.argmin(np.abs(np.array(cumul_frac_of_total_records)-i))
-        condition = {subgroup_col_name: occupation_vals_sorted_imputation[:j+1]}
+        condition = {subgroup_col_name: subgroup_vals_sorted_imputation[:j+1]}
         fcondition = f'{condition}'
-        targeted_attack_by_state_dict[fcondition] = {}
+        performance_by_subgroup_dict[fcondition] = {}
         indices = get_indices_by_group_condition(experiment.X_train, condition)
         frac_of_total_records = len(indices)/experiment.X_train.shape[0]
-        targeted_attack_by_state_dict[frac_of_total_records] = {}
-        # targeted_attack_by_state_dict[frac_of_total_records]['imputation_attack_accuracy'] = (experiment.sens_val_ground_truth_imputation[indices] == imputation_pred[indices]).sum()/len(indices)
-        targeted_attack_by_state_dict[frac_of_total_records]['imputation_attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth_imputation[indices], imputation_pred[indices], metric=metric)
+        performance_by_subgroup_dict[frac_of_total_records] = {}
+        # performance_by_subgroup_dict[frac_of_total_records]['imputation_attack_accuracy'] = (experiment.sens_val_ground_truth_imputation[indices] == imputation_pred[indices]).sum()/len(indices)
+        performance_by_subgroup_dict[frac_of_total_records]['imputation_attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], imputation_pred[indices], metric=metric)
 
-    return pd.DataFrame.from_dict(targeted_attack_by_state_dict, orient='index')
+    return pd.DataFrame.from_dict(performance_by_subgroup_dict, orient='index')
 
-def nested_attribute_based_targeted_imputation(experiment, aux_df, subgroup_cols, is_train=1, kappas=[0.5, 0.25, 0.125, 0.06125, 0.0306125], metric='accuracy'):
-    imputation_pred = imputation_attack(experiment, aux_df_onehot=aux_df, subgroup_column='occupation', is_train=is_train)
-    correlation_vs_ang_diff = {}
-    subgroup_vals_sorted_dict = {col: get_subgroup_vals_sorted_by_risk_imputation(experiment, aux_df, col).tolist() for col in subgroup_cols}
+def nested_attribute_based_targeted_imputation(experiment, X_target, y_target, X_aux, y_aux, subgroup_cols, kappas=[0.5, 0.25, 0.125, 0.06125, 0.0306125], metric='accuracy'):
+    imputation_pred = imputation_attack(experiment, X_target, y_target, X_aux, y_aux, experiment.ds.ds.meta)
+    performance_by_subgroup_dict = {}
+    subgroup_vals_sorted_dict = {col: get_subgroup_vals_sorted_by_risk_imputation(experiment, X_aux, y_aux, col).tolist() for col in subgroup_cols}
     # print(subgroup_vals_sorted_dict)
     nested_conditions = [({}, {})]
     for i in range(len(subgroup_cols)):
@@ -86,7 +88,7 @@ def nested_attribute_based_targeted_imputation(experiment, aux_df, subgroup_cols
         conditions = [{subgroup_col: subgroup_vals_sorted[:j+1]} for j in range(len(subgroup_vals_sorted))]
         conditions = [condition | nested_conditions[-1][0] for condition in conditions]
         # print(conditions)
-        cumul_frac_of_total_records = [len(get_indices_by_group_condition(experiment.X_train, condition))/experiment.X_train.shape[0] for condition in conditions]
+        cumul_frac_of_total_records = [len(get_indices_by_group_condition(X_target, condition))/X_target.shape[0] for condition in conditions]
         # print(cumul_frac_of_total_records)
         # print(np.where(np.array(cumul_frac_of_total_records) > kappa))
         # j = np.argmin(np.abs(np.array(cumul_frac_of_total_records)-kappa))
@@ -95,24 +97,24 @@ def nested_attribute_based_targeted_imputation(experiment, aux_df, subgroup_cols
 
     for i, (condition, prev_condition) in enumerate(nested_conditions):
         fcondition = f'{condition}'
-        correlation_vs_ang_diff[fcondition] = {}
-        indices = get_indices_by_group_condition(experiment.X_train, condition)
-        frac_of_total_records = len(indices)/experiment.X_train.shape[0]
+        performance_by_subgroup_dict[fcondition] = {}
+        indices = get_indices_by_group_condition(X_target, condition)
+        frac_of_total_records = len(indices)/X_target.shape[0]
         if i>0 and frac_of_total_records > kappas[i-1]:
-            indices = get_indices_by_group_condition(experiment.X_train, prev_condition)
-            frac_of_total_records = len(indices)/experiment.X_train.shape[0]
+            indices = get_indices_by_group_condition(X_target, prev_condition)
+            frac_of_total_records = len(indices)/X_target.shape[0]
         #     print(prev_condition)
         # else:
         #     print(condition)
-        correlation_vs_ang_diff[frac_of_total_records] = {}
-        correlation_vs_ang_diff[frac_of_total_records]['i'] = i
-        # correlation_vs_ang_diff[frac_of_total_records]['attack_accuracy'] = (experiment.sens_val_ground_truth_imputation[indices] == imputation_pred[indices]).sum()/len(indices)
-        correlation_vs_ang_diff[frac_of_total_records]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth_imputation[indices], imputation_pred[indices], metric=metric)
+        performance_by_subgroup_dict[frac_of_total_records] = {}
+        performance_by_subgroup_dict[frac_of_total_records]['i'] = i
+        # performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = (experiment.sens_val_ground_truth_imputation[indices] == imputation_pred[indices]).sum()/len(indices)
+        performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], imputation_pred[indices], metric=metric)
 
-    return pd.DataFrame.from_dict(correlation_vs_ang_diff, orient='index')
+    return pd.DataFrame.from_dict(performance_by_subgroup_dict, orient='index')
 
 def get_angular_difference_for_each_subgroup_val(experiment, subgroup_col_name):
-    correlation_vs_ang_diff = {}
+    performance_by_subgroup_dict = {}
     subgroup_vals = experiment.ds.ds.original_df[subgroup_col_name].unique()
 
     for i in subgroup_vals:
@@ -121,18 +123,18 @@ def get_angular_difference_for_each_subgroup_val(experiment, subgroup_col_name):
         indices = get_indices_by_group_condition(experiment.X_case_2, condition)
         try:
             angular_difference = get_angular_difference(experiment, experiment.confidence_array_case_2[indices], experiment.y_case_2[indices])
-            correlation_vs_ang_diff[fcondition] = {}
-            correlation_vs_ang_diff[fcondition]['subgroup_val'] = i
-            correlation_vs_ang_diff[fcondition]['angular_difference'] = angular_difference
+            performance_by_subgroup_dict[fcondition] = {}
+            performance_by_subgroup_dict[fcondition]['subgroup_val'] = i
+            performance_by_subgroup_dict[fcondition]['angular_difference'] = angular_difference
         except:
             continue
 
-    correlation_vs_ang_diff_df = pd.DataFrame.from_dict(correlation_vs_ang_diff, orient='index')
+    performance_by_subgroup_df = pd.DataFrame.from_dict(performance_by_subgroup_dict, orient='index')
     
     if experiment.ds.ds.name in ['Census19', 'Adult']:
-        return correlation_vs_ang_diff_df.sort_values(by='angular_difference', ascending=True)
+        return performance_by_subgroup_df.sort_values(by='angular_difference', ascending=True)
     else:
-        return correlation_vs_ang_diff_df.sort_values(by='angular_difference', ascending=False)
+        return performance_by_subgroup_df.sort_values(by='angular_difference', ascending=False)
 
 def get_angular_difference_range_for_subgroup(experiment, subgroup_col_name):
     angular_differences = get_angular_difference_for_each_subgroup_val(experiment, subgroup_col_name)[['angular_difference']].to_numpy()
@@ -145,7 +147,7 @@ def single_attribute_based_targeted_ai(experiment, sens_pred, subgroup_col_name 
     occupation_vals_sorted = get_subgroup_vals_sorted_by_risk(experiment, subgroup_col_name=subgroup_col_name).tolist()
     # print(occupation_vals_sorted)
 
-    targeted_attack_by_state_dict = {}
+    performance_by_subgroup_dict = {}
     # sensitive_column_index = list(experiment.X_train.columns).index(f'{experiment.sensitive_column}_1')
     conditions = [{subgroup_col_name: occupation_vals_sorted[:i+1]} for i in range(len(occupation_vals_sorted))]
     cumul_frac_of_total_records = [len(get_indices_by_group_condition(experiment.X_train, condition))/experiment.X_train.shape[0] for condition in conditions]
@@ -154,19 +156,19 @@ def single_attribute_based_targeted_ai(experiment, sens_pred, subgroup_col_name 
         j = np.argmin(np.abs(np.array(cumul_frac_of_total_records)-i))
         condition = {subgroup_col_name: occupation_vals_sorted[:j+1]}
         fcondition = f'{condition}'
-        targeted_attack_by_state_dict[fcondition] = {}
+        performance_by_subgroup_dict[fcondition] = {}
         indices = get_indices_by_group_condition(experiment.X_train, condition)
         frac_of_total_records = len(indices)/experiment.X_train.shape[0]
-        targeted_attack_by_state_dict[frac_of_total_records] = {}
-        # targeted_attack_by_state_dict[frac_of_total_records]['attack_accuracy'] = (experiment.sens_val_ground_truth[indices] == sens_pred[indices]).sum()/len(indices)
-        targeted_attack_by_state_dict[frac_of_total_records]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], sens_pred[indices], metric=metric)
+        performance_by_subgroup_dict[frac_of_total_records] = {}
+        # performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = (experiment.sens_val_ground_truth[indices] == sens_pred[indices]).sum()/len(indices)
+        performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], sens_pred[indices], metric=metric)
 
     print(condition)
 
-    return pd.DataFrame.from_dict(targeted_attack_by_state_dict, orient='index')
+    return pd.DataFrame.from_dict(performance_by_subgroup_dict, orient='index')
 
 def nested_attribute_based_targeted_ai(experiment, sens_pred, subgroup_cols, kappas=[0.5, 0.25, 0.125, 0.06125, 0.0306125], metric='accuracy'):
-    correlation_vs_ang_diff = {}
+    performance_by_subgroup_dict = {}
     subgroup_vals_sorted_dict = {col: get_subgroup_vals_sorted_by_risk(experiment, col).tolist() for col in subgroup_cols}
     # print(subgroup_vals_sorted_dict)
     nested_conditions = [({}, {})]
@@ -190,7 +192,7 @@ def nested_attribute_based_targeted_ai(experiment, sens_pred, subgroup_cols, kap
         # print(condition)
         # print(prev_condition)
         fcondition = f'{condition}'
-        # correlation_vs_ang_diff[fcondition] = {}
+        # performance_by_subgroup_dict[fcondition] = {}
         indices = get_indices_by_group_condition(experiment.X_train, condition)
         frac_of_total_records = len(indices)/experiment.X_train.shape[0]
         # print(frac_of_total_records)
@@ -202,11 +204,11 @@ def nested_attribute_based_targeted_ai(experiment, sens_pred, subgroup_cols, kap
         #     print(prev_condition)
         # else:
         # print(condition.keys())
-        correlation_vs_ang_diff[frac_of_total_records] = {}
-        correlation_vs_ang_diff[frac_of_total_records]['i'] = i
-        # correlation_vs_ang_diff[frac_of_total_records]['attack_accuracy'] = (experiment.sens_val_ground_truth[indices] == sens_pred[indices]).sum()/len(indices)
-        correlation_vs_ang_diff[frac_of_total_records]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], sens_pred[indices], metric=metric)
+        performance_by_subgroup_dict[frac_of_total_records] = {}
+        performance_by_subgroup_dict[frac_of_total_records]['i'] = i
+        # performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = (experiment.sens_val_ground_truth[indices] == sens_pred[indices]).sum()/len(indices)
+        performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], sens_pred[indices], metric=metric)
 
-    return pd.DataFrame.from_dict(correlation_vs_ang_diff, orient='index')
+    return pd.DataFrame.from_dict(performance_by_subgroup_dict, orient='index')
 
     

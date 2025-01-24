@@ -88,7 +88,47 @@ def predict_proba_for_mitiagtor(mitigator, X):
         return pred
 
 # def Yeom_attack(experiment, model, X_test, y_test, meta):
-def imputation_attack(experiment, subgroup_column='SEX', aux_df_onehot=None, pred_on_train=True, is_train=0):
+def imputation_attack(experiment, X_target, y_target, X_aux, y_aux, meta):
+    X_attack_aux = X_aux.copy()
+    y_oh_columns = [f'{meta["y_column"]}_{i}' for i in meta["y_values"]]
+    X_attack_aux[y_oh_columns] = experiment.ds.ds.y_enc.transform(y_aux.ravel().reshape(-1, 1)).toarray()
+    sensitive_columns = [f'{meta["sensitive_column"]}_{i}' for i in meta["sensitive_values"]]
+    X_attack_aux.drop(sensitive_columns, axis=1, inplace=True)
+    # y_attack_aux = X_aux[sensitive_columns].idxmax(axis=1).apply(lambda x: int(x.split('_')[-1]))
+    y_attack_aux = X_aux[sensitive_columns]
+
+    inv_clf = model_utils.get_model(max_iter=100)
+    inv_clf.fit(X_attack_aux, y_attack_aux)
+
+    X_attack_target = X_target.copy()
+    X_attack_target.drop(sensitive_columns, axis=1, inplace=True)
+    # y_attack_target = X_target[sensitive_columns]
+    X_attack_target[y_oh_columns] = experiment.ds.ds.y_enc.transform(y_target.ravel().reshape(-1, 1)).toarray()
+
+    return np.argmax(inv_clf.predict(X_attack_target), axis=1)
+
+def whitebox_neuron_attack(experiment, clf, X_target, y_target, X_aux, y_aux, meta):
+    X_attack_aux = X_aux.copy()
+    y_oh_columns = [f'{meta["y_column"]}_{i}' for i in meta["y_values"]]
+    X_attack_aux[y_oh_columns] = experiment.ds.ds.y_enc.transform(y_aux.ravel().reshape(-1, 1)).toarray()
+    sensitive_columns = [f'{meta["sensitive_column"]}_{i}' for i in meta["sensitive_values"]]
+    X_attack_aux.drop(sensitive_columns, axis=1, inplace=True)
+    y_attack_aux = X_aux[sensitive_columns].idxmax(axis=1).apply(lambda x: int(x.split('_')[-1]))
+    X_attack_aux_neuron = make_neuron_output_data(experiment.ds, X_attack_aux, clf, experiment.ds.ds.y_columns)
+
+    top_10_corr_neurons_model = wb_corr_attacks(X_attack_aux_neuron, y_attack_aux)
+
+    X_attack_target = X_target.copy()
+    X_attack_target.drop(sensitive_columns, axis=1, inplace=True)
+    X_attack_target[y_oh_columns] = experiment.ds.ds.y_enc.transform(y_target.ravel().reshape(-1, 1)).toarray()
+    X_attack_target_neuron = make_neuron_output_data(experiment.ds, X_attack_target, clf, experiment.ds.ds.y_columns)
+
+    preds = top_10_corr_neurons_model(torch.from_numpy(X_attack_target_neuron.to_numpy()).float()).detach().numpy()
+    preds = np.where(preds > top_10_corr_neurons_model.threshold, 1, 0)
+    return preds
+    
+
+def imputation_attack_old(experiment, subgroup_column='SEX', aux_df_onehot=None, pred_on_train=True, is_train=0):
     original_df_onehot = experiment.ds.ds.df.copy()
 
     original_df_onehot = original_df_onehot[original_df_onehot["is_train"]==1].drop("is_train", axis=1).reset_index(drop=True)
@@ -117,6 +157,7 @@ def imputation_attack(experiment, subgroup_column='SEX', aux_df_onehot=None, pre
 
     # result_dict = get_disparity_by_subgroup(attack_type='INV', ds=experiment.ds, subgroup_columns=['SEX'], X_att_query=X_attack_orig, y_att_query=y_sens_orig, metric='accuracy', clf = inv_clf)
     # experiment.inv_clf = inv_clf
+    return np.argmax(inv_clf.predict(X_attack_orig), axis=1)
     if pred_on_train:
         return get_imputation_prediction(ds=experiment.ds, subgroup_columns={subgroup_column}, X_att_query=X_attack_orig, y_att_query=y_sens_orig, clf = inv_clf)
     else:
@@ -129,7 +170,7 @@ def imputation_attack(experiment, subgroup_column='SEX', aux_df_onehot=None, pre
         # result_dict[metric] = temp_dict
     return result_dict
 
-def whitebox_neuron_attack(experiment, clf, subgroup_column="SEX", metrics=['accuracy', 'precision', 'recall', 'fpr', 'f1', 'auc'], aux_df=None):
+def whitebox_neuron_attack_old(experiment, clf, subgroup_column="SEX", metrics=['accuracy', 'precision', 'recall', 'fpr', 'f1', 'auc'], aux_df=None):
     original_df_onehot = experiment.ds.ds.df.copy()
 
     original_df_onehot = original_df_onehot[original_df_onehot["is_train"]==0].drop("is_train", axis=1)
@@ -166,6 +207,39 @@ def whitebox_neuron_attack(experiment, clf, subgroup_column="SEX", metrics=['acc
     return result_dict
 
 def LOMIA_attack(experiment, model, X_test, y_test, meta, indices=None):
+    sens_pred, case_indices = CSMIA_attack(model, X_test, y_test, meta)
+    case_1_indices = case_indices[1]
+
+    if case_1_indices.sum() == 0:
+        # random attack
+        return np.random.choice(meta["sensitive_values"], len(X_test))
+
+    # original_df_onehot = experiment.ds.ds.df.copy()
+    # original_df_onehot = original_df_onehot[original_df_onehot["is_train"]==1].drop("is_train", axis=1).reset_index(drop=True)
+    # X_attack_orig, y_sens_orig = experiment.ds.ds.get_attack_df(original_df_onehot)
+    X_attack_orig = X_test.copy()
+    y_values = meta["y_values"]
+    y_column = meta["y_column"]
+    y_oh_columns = [f'{y_column}_{y_value}' for y_value in y_values]
+    X_attack_orig[y_oh_columns] = 0
+    X_attack_orig[y_oh_columns] = experiment.ds.ds.y_enc.transform(y_test.ravel().reshape(-1, 1)).toarray()
+    sensitive_columns = [f'{meta["sensitive_column"]}_{i}' for i in meta["sensitive_values"]]
+    X_attack_orig.drop(sensitive_columns, axis=1, inplace=True)
+
+    if indices is not None:
+        # X_attack_orig, y_sens_orig = X_attack_orig.loc[indices].reset_index(drop=True), y_sens_orig[indices]
+        X_attack_orig = X_attack_orig.loc[indices].reset_index(drop=True)
+
+    X_attack, y_attack = X_attack_orig.iloc[case_1_indices], sens_pred[case_1_indices]
+    y_attack_onehot = experiment.ds.ds.sensitive_enc.transform(y_attack.ravel().reshape(-1, 1)).toarray()
+
+    attack_clf = model_utils.get_model(max_iter=40)
+    attack_clf.fit(X_attack, y_attack_onehot)
+
+    sens_pred_LOMIA = np.argmax(attack_clf.predict(X_attack_orig), axis=1)
+    return sens_pred_LOMIA
+
+def LOMIA_attack_old(experiment, model, X_test, y_test, meta, indices=None):
     sens_pred, case_indices = CSMIA_attack(model, X_test, y_test, meta)
     case_1_indices = case_indices[1]
 

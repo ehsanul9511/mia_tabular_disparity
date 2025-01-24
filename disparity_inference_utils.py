@@ -9,6 +9,8 @@ import seaborn as sns
 
 def get_indices_by_group_condition(X, conditions):
     X_new = X.copy()
+    if len(conditions.keys()) == 0:
+        return X_new.index.to_numpy().astype(int)
     for key, value in conditions.items():
         if isinstance(value, list):
             # If value is a list, filter for any of the conditions in the list
@@ -21,8 +23,17 @@ def get_indices_by_group_condition(X, conditions):
 
 def get_corr_btn_sens_and_out_per_subgroup(experiment, X, y, conditions):
     sensitive_column = experiment.ds.ds.meta["sensitive_column"]
-    sensitive_positive = experiment.ds.ds.meta["sensitive_positive"]
+    y_column = experiment.ds.ds.meta["y_column"]
     indices = get_indices_by_group_condition(X, conditions)
+    if len(indices) == 0:
+        return np.nan
+    X_new = X.loc[indices].copy()
+    X_new[sensitive_column] = X_new[[f'{sensitive_column}_{val}' for val in experiment.ds.ds.meta["sensitive_values"]]].idxmax(axis=1).str.replace(f'{sensitive_column}_', '')
+    X_new[sensitive_column] = X_new[sensitive_column].astype(experiment.ds.ds.original_df[sensitive_column].dtype)
+    X_new[sensitive_column] = X_new[sensitive_column].map({val: i for i, val in enumerate(experiment.ds.ds.meta["sensitive_values"])})
+    X_new[y_column] = y[indices]
+    return X_new[[sensitive_column, y_column]].corr().iloc[0, 1]
+    sensitive_positive = experiment.ds.ds.meta["sensitive_positive"]
     X_new = X.loc[indices]
     y_new = y[indices]
     X_new = X_new[[f'{sensitive_column}_{sensitive_positive}']].to_numpy().ravel()
