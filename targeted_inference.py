@@ -4,7 +4,6 @@ import data_utils
 import model_utils
 from attack_utils import get_CSMIA_case_by_case_results, CSMIA_attack, LOMIA_attack, get_LOMIA_results, imputation_attack
 from data_utils import oneHotCatVars, filter_random_data_by_conf_score
-from vulnerability_score_utils import get_vulnerability_score, draw_hist_plot
 from experiment_utils import MIAExperiment
 from disparity_inference_utils import get_confidence_array, draw_confidence_array_scatter, get_indices_by_group_condition, get_corr_btn_sens_and_out_per_subgroup, get_slopes, get_angular_difference, calculate_stds, get_mutual_info_btn_sens_and_out_per_subgroup
 import numpy as np

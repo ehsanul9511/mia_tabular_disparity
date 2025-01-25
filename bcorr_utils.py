@@ -4,7 +4,6 @@ import data_utils
 import model_utils
 from attack_utils import get_CSMIA_case_by_case_results, CSMIA_attack, LOMIA_attack
 from data_utils import oneHotCatVars, filter_random_data_by_conf_score
-from vulnerability_score_utils import get_vulnerability_score, draw_hist_plot
 from experiment_utils import MIAExperiment
 from disparity_inference_utils import get_confidence_array, draw_confidence_array_scatter, get_indices_by_group_condition, get_corr_btn_sens_and_out_per_subgroup, get_slopes, get_angular_difference, calculate_stds, get_mutual_info_btn_sens_and_out_per_subgroup
 import numpy as np
@@ -27,12 +26,22 @@ import pickle
 # import utils
 import copy
 
-import matplotlib as mpl
+from sklearn.neural_network import MLPClassifier
 
-# Setting the font family, size, and weight globally
-mpl.rcParams['font.family'] = 'DejaVu Sans'
-mpl.rcParams['font.size'] = 8
-mpl.rcParams['font.weight'] = 'light'
+class MLPClassifierFC(MLPClassifier):
+    def fit(self, X, y, sample_weight=None):
+        """
+            Fit the model to the given data.
+        """
+        if sample_weight is not None:
+            # resample data according to sample weights
+            n_samples = X.shape[0]
+            sample_weight = np.asarray(sample_weight)/np.sum(sample_weight)
+            sample_idxs = np.random.choice(n_samples, n_samples, p=sample_weight)
+            X = X.iloc[sample_idxs]
+            y = y[sample_idxs]
+            
+        return super().fit(X, y)
 
 
 def bcorr_sampling(experiment, X_train, y_tr, y_tr_onehot, subgroup_col_name, p=-0.1):
@@ -56,7 +65,11 @@ def bcorr_sampling(experiment, X_train, y_tr, y_tr_onehot, subgroup_col_name, p=
 
 
 def evaluate(experiment, clf, X_train, y_tr, X_test, y_te, subgroup_col_name):
-    y_te_pred = np.argmax(clf.predict_proba(X_test), axis=1)
+    # y_te_pred = np.argmax(clf.predict_proba(X_test), axis=1)
+    if isinstance(clf, MLPClassifier):
+        y_te_pred = np.argmax(clf.predict_proba(X_test), axis=1)
+    elif isinstance(clf, MLPClassifierFC):
+        y_te_pred = clf.predict(X_test)
 
     subgroup_oh_cols = [col for col in X_train.columns if subgroup_col_name in col]
     subgroup_vals_tr = X_train[subgroup_oh_cols].to_numpy().argmax(axis=1)
