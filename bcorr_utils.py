@@ -68,7 +68,7 @@ def evaluate(experiment, clf, X_train, y_tr, X_test, y_te, subgroup_col_name):
     # y_te_pred = np.argmax(clf.predict_proba(X_test), axis=1)
     if isinstance(clf, MLPClassifier):
         y_te_pred = np.argmax(clf.predict_proba(X_test), axis=1)
-    elif isinstance(clf, MLPClassifierFC):
+    else:
         y_te_pred = clf.predict(X_test)
 
     subgroup_oh_cols = [col for col in X_train.columns if subgroup_col_name in col]
