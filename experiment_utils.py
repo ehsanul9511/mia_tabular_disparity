@@ -6,6 +6,20 @@ from sklearn.feature_selection import mutual_info_classif
 from sklearn.metrics import roc_curve, auc, roc_auc_score, accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 import re
 
+def false_positive_rate(x, y):
+    tp, fn, fp, tn = confusion_matrix(x, y).ravel()
+    return round(fp / (fp + tn), 4)
+
+eval_func = {
+    'precision': precision_score,
+    'recall': recall_score,
+    'f1': f1_score,
+    'accuracy': accuracy_score,
+    'fpr': false_positive_rate
+}
+
+metrics = ['accuracy', 'precision', 'recall', 'fpr', 'f1']
+
 def get_perf(input_string):
     # Use regular expression to extract the number inside parenthesis
     match = re.search(r'\(([\d.]+)\)', input_string)

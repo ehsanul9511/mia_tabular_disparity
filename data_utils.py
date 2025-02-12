@@ -469,7 +469,7 @@ class CensusIncome:
             num_of_samples_dict_train[i][(1, 1)] = n[i] // 2 - num_of_samples_dict_train[i][(0, 1)]
             num_of_samples_dict_train[i][(1, 0)] = n[i] // 2 - num_of_samples_dict_train[i][(0, 0)]
 
-        print(num_of_samples_dict_train)
+        # print(num_of_samples_dict_train)
         indices_dict = {}
         for i in tqdm(range(len(subgroup_values))):
             for j in [0, 1]:
@@ -549,14 +549,12 @@ class CensusIncome:
 
             indices_dict = {}
 
-            for i in tqdm(range(len(subgroup_values))):
+            for i in tqdm(range(len(subgroup_values)), disable=True):
                 p1 = correlation_by_subgroup_values[i]
                 num_of_samples_dict[i][(0, 1)] = int(sqrt(m) * (sqrt(m) - p1) * n / 2 / (m + 1))
                 num_of_samples_dict[i][(0, 0)] = int(sqrt(m) * (sqrt(m) + p1) * n / 2 / (m + 1))
                 num_of_samples_dict[i][(1, 1)] = n // 2 - num_of_samples_dict[i][(0, 1)]
                 num_of_samples_dict[i][(1, 0)] = n // 2 - num_of_samples_dict[i][(0, 0)]
-
-                print(num_of_samples_dict)
 
 
                 for j in [0, 1]:
@@ -569,51 +567,22 @@ class CensusIncome:
                         continue
 
                     if num_of_samples_dict[i][(0, j)] > positive_val_count:
-                        print(f'before scaling: {num_of_samples_dict[i][(0, j)]} {positive_val_count} {num_of_samples_dict[i][(1, j)]}')
+                        # print(f'before scaling: {num_of_samples_dict[i][(0, j)]} {positive_val_count} {num_of_samples_dict[i][(1, j)]}')
                         scaling_factor = positive_val_count / num_of_samples_dict[i][(0, j)]
                         num_of_samples_dict[i][(0, j)] = int(num_of_samples_dict[i][(0, j)] * scaling_factor)
                         num_of_samples_dict[i][(1, j)] = int(num_of_samples_dict[i][(1, j)] * scaling_factor)
-                        print(f'after scaling: {num_of_samples_dict[i][(0, j)]} {positive_val_count} {num_of_samples_dict[i][(0, j)] / positive_val_count}')
+                        # print(f'after scaling: {num_of_samples_dict[i][(0, j)]} {positive_val_count} {num_of_samples_dict[i][(0, j)] / positive_val_count}')
 
                     if num_of_samples_dict[i][(1, j)] > negative_val_count:
-                        print(f'before scaling: {num_of_samples_dict[i][(1, j)]} {negative_val_count} {num_of_samples_dict[i][(1, j)] / negative_val_count}')
+                        # print(f'before scaling: {num_of_samples_dict[i][(1, j)]} {negative_val_count} {num_of_samples_dict[i][(1, j)] / negative_val_count}')
                         scaling_factor = negative_val_count / num_of_samples_dict[i][(1, j)]
                         num_of_samples_dict[i][(0, j)] = int(num_of_samples_dict[i][(0, j)] * scaling_factor)
                         num_of_samples_dict[i][(1, j)] = int(num_of_samples_dict[i][(1, j)] * scaling_factor)
-                        print(f'after scaling: {num_of_samples_dict[i][(1, j)]} {negative_val_count} {num_of_samples_dict[i][(1, j)] / negative_val_count}')
+                        # print(f'after scaling: {num_of_samples_dict[i][(1, j)]} {negative_val_count} {num_of_samples_dict[i][(1, j)] / negative_val_count}')
 
                     indices_dict[(i, j)] = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(0, j)]), replace=False, random_state=random_state).index.append(data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(1, j)]), replace=False, random_state=random_state).index)
 
-
-
-                # print(num_of_samples_dict)
-                # for i in tqdm(range(len(subgroup_values))):
-                # try:
-                #     for j in [0, 1]:
-                #         np.random.seed(random_state)
-                #         indices_dict[(i, j)] = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(0, j)]), replace=replace_bool).index.append(data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(1, j)]), replace=replace_bool).index)
-                # except:
-                #     positive_val_count = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].shape[0]
-                #     negative_val_count = data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].shape[0]
-                #     print(positive_val_count, negative_val_count, num_of_samples_dict[i][(0, 1)], num_of_samples_dict[i][(0, 0)])
-                #     while True:
-                #         if positive_val_count < 100 or negative_val_count < 100 or num_of_samples_dict[i][(0, 1)] <= 0 or num_of_samples_dict[i][(0, 0)] <= 0:
-                #             num_of_samples_dict[i][(0, 1)] = 0
-                #             num_of_samples_dict[i][(0, 0)] = 0
-                #             break
-                #         for j in [0, 1]:
-                #             for k in [0, 1]:
-                #                 num_of_samples_dict[i][(j, k)] = int(num_of_samples_dict[i][(j, k)] * 0.9)
-                #                 print(num_of_samples_dict[i][(j, k)])
-                #         try:
-                #             for j in [0, 1]:
-                #                 np.random.seed(random_state)
-                #                 indices_dict[(i, j)] = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(0, j)]), replace=replace_bool).index.append(data[data[y_col_name]==y_values[1]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict[i][(1, j)]), replace=replace_bool).index)
-                #             break
-                #         except:
-                #             continue
-
-            print([len(indices_dict[(i, j)]) for i in range(len(subgroup_values)) for j in [0, 1]])
+            # print([len(indices_dict[(i, j)]) for i in range(len(subgroup_values)) for j in [0, 1]])
             indices = np.concatenate([indices_dict[(i, j)] for i in range(len(subgroup_values)) for j in [0, 1]])
             self.train_data_indices = indices
             train_data = data.loc[indices]
@@ -651,7 +620,7 @@ class CensusIncome:
                 second_set_indices = data[data[y_col_name]==y_values[j]][data[sensitive_col_name]==sensitive_values[1]].sample(n=int(num_of_samples_dict_train[(1, j)]), replace=False, random_state=random_state).index
 
                 indices_dict[j] = first_set_indices.append(second_set_indices)
-            print(num_of_samples_dict_train)
+            # print(num_of_samples_dict_train)
             
             indices = np.concatenate([indices_dict[j] for j in [0, 1]])
             self.train_data_indices = indices
@@ -669,11 +638,6 @@ class CensusIncome:
             self.meta['transformations'].append(lambda df: df.assign(MAR=df['MAR'].apply(lambda x: 0 if x == 0 else 1 if x in [1, 2] else 2)))
             self.meta['sensitive_values'] = [0, 1, 2]
 
-        
-        # randomly mutate the sensitive attribute value for a subset of the data
-        if "sensitive_attribute_mutate" in self.meta:
-            random_indices = np.random.choice(train_data.index, size=int(len(train_data.index) * self.meta["sensitive_attribute_mutate"]), replace=False)
-            train_data.loc[random_indices, self.meta["sensitive_column"]] = np.random.choice(self.meta["sensitive_values"], size=len(random_indices), replace=True)
 
         # Add field to identify train/test, process together
         train_data['is_train'] = 1
@@ -706,21 +670,6 @@ class CensusIncome:
         self.train_df = self.train_df.drop(columns=['is_train'], axis=1)
         self.test_df = self.test_df.drop(columns=['is_train'], axis=1)
 
-        # def s_split(this_df, rs=random_state):
-        #     sss = StratifiedShuffleSplit(n_splits=1,
-        #                                  test_size=test_ratio,
-        #                                  random_state=rs)
-        #     # Stratification on the properties we care about for this dataset
-        #     # so that adv/victim split does not introduce
-        #     # unintended distributional shift
-        #     splitter = sss.split(
-        #         this_df, this_df[["sex:Female", "race:White", "income"]])
-        #     split_1, split_2 = next(splitter)
-        #     return this_df.iloc[split_1], this_df.iloc[split_2]
-
-        # # Create train/test splits for victim/adv
-        # self.train_df_victim, self.train_df_adv = s_split(self.train_df)
-        # self.test_df_victim, self.test_df_adv = s_split(self.test_df)
 
     
     def get_shadow_datasets(self, num_of_shadow_datasets=128, random_state=42):
