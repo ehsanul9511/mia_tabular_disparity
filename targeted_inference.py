@@ -61,16 +61,14 @@ def single_attribute_based_targeted_imputation(experiment, X_target, y_target, X
     conditions = [{subgroup_col_name: subgroup_vals_sorted_imputation[:i+1]} for i in range(len(subgroup_vals_sorted_imputation))]
     cumul_frac_of_total_records = [len(get_indices_by_group_condition(experiment.X_train, condition))/experiment.X_train.shape[0] for condition in conditions]
     # return cumul_frac_of_total_records
-    for i in kappas:
-        j = np.argmin(np.abs(np.array(cumul_frac_of_total_records)-i))
+    for kappa in kappas:
+        j = np.argmin(np.abs(np.array(cumul_frac_of_total_records)-kappa))
         condition = {subgroup_col_name: subgroup_vals_sorted_imputation[:j+1]}
         fcondition = f'{condition}'
         performance_by_subgroup_dict[fcondition] = {}
         indices = get_indices_by_group_condition(experiment.X_train, condition)
-        frac_of_total_records = len(indices)/experiment.X_train.shape[0]
-        performance_by_subgroup_dict[frac_of_total_records] = {}
-        # performance_by_subgroup_dict[frac_of_total_records]['imputation_attack_accuracy'] = (experiment.sens_val_ground_truth_imputation[indices] == imputation_pred[indices]).sum()/len(indices)
-        performance_by_subgroup_dict[frac_of_total_records]['imputation_attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], imputation_pred[indices], metric=metric)
+        performance_by_subgroup_dict[kappa] = {}
+        performance_by_subgroup_dict[kappa]['imputation_attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], imputation_pred[indices], metric=metric)
 
     return pd.DataFrame.from_dict(performance_by_subgroup_dict, orient='index')
 
@@ -151,18 +149,18 @@ def single_attribute_based_targeted_ai(experiment, sens_pred, subgroup_col_name 
     conditions = [{subgroup_col_name: occupation_vals_sorted[:i+1]} for i in range(len(occupation_vals_sorted))]
     cumul_frac_of_total_records = [len(get_indices_by_group_condition(experiment.X_train, condition))/experiment.X_train.shape[0] for condition in conditions]
     # return cumul_frac_of_total_records
-    for i in kappas:
-        j = np.argmin(np.abs(np.array(cumul_frac_of_total_records)-i))
+    for kappa in kappas:
+        j = np.argmin(np.abs(np.array(cumul_frac_of_total_records)-kappa))
         condition = {subgroup_col_name: occupation_vals_sorted[:j+1]}
         fcondition = f'{condition}'
         performance_by_subgroup_dict[fcondition] = {}
         indices = get_indices_by_group_condition(experiment.X_train, condition)
-        frac_of_total_records = len(indices)/experiment.X_train.shape[0]
-        performance_by_subgroup_dict[frac_of_total_records] = {}
+        # frac_of_total_records = len(indices)/experiment.X_train.shape[0]
+        performance_by_subgroup_dict[kappa] = {}
         # performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = (experiment.sens_val_ground_truth[indices] == sens_pred[indices]).sum()/len(indices)
-        performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], sens_pred[indices], metric=metric)
+        performance_by_subgroup_dict[kappa]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], sens_pred[indices], metric=metric)
 
-    print(condition)
+    # print(condition)
 
     return pd.DataFrame.from_dict(performance_by_subgroup_dict, orient='index')
 
