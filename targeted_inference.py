@@ -96,17 +96,18 @@ def nested_attribute_based_targeted_imputation(experiment, X_target, y_target, X
         fcondition = f'{condition}'
         performance_by_subgroup_dict[fcondition] = {}
         indices = get_indices_by_group_condition(X_target, condition)
-        frac_of_total_records = len(indices)/X_target.shape[0]
-        if i>0 and frac_of_total_records > kappas[i-1]:
-            indices = get_indices_by_group_condition(X_target, prev_condition)
-            frac_of_total_records = len(indices)/X_target.shape[0]
+        # frac_of_total_records = len(indices)/X_target.shape[0]
+        # if i>0 and frac_of_total_records > kappas[i-1]:
+        #     indices = get_indices_by_group_condition(X_target, prev_condition)
+        #     frac_of_total_records = len(indices)/X_target.shape[0]
         #     print(prev_condition)
         # else:
         #     print(condition)
-        performance_by_subgroup_dict[frac_of_total_records] = {}
-        performance_by_subgroup_dict[frac_of_total_records]['i'] = i
+        kappa = kappas[i-1] if i>0 else 1
+        performance_by_subgroup_dict[kappa] = {}
+        performance_by_subgroup_dict[kappa]['Depth'] = i
         # performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = (experiment.sens_val_ground_truth_imputation[indices] == imputation_pred[indices]).sum()/len(indices)
-        performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], imputation_pred[indices], metric=metric)
+        performance_by_subgroup_dict[kappa]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], imputation_pred[indices], metric=metric)
 
     return pd.DataFrame.from_dict(performance_by_subgroup_dict, orient='index')
 
@@ -196,15 +197,11 @@ def nested_attribute_based_targeted_ai(experiment, sens_pred, subgroup_cols, kap
         if i>0 and frac_of_total_records > kappas[i-1]:
             condition = prev_condition
             indices = get_indices_by_group_condition(experiment.X_train, condition)
-            frac_of_total_records = len(indices)/experiment.X_train.shape[0]
-            # print(frac_of_total_records)
-        #     print(prev_condition)
-        # else:
-        # print(condition.keys())
-        performance_by_subgroup_dict[frac_of_total_records] = {}
-        performance_by_subgroup_dict[frac_of_total_records]['i'] = i
+        kappa = kappas[i-1] if i>0 else 1
+        performance_by_subgroup_dict[kappa] = {}
+        performance_by_subgroup_dict[kappa]['Depth'] = i
         # performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = (experiment.sens_val_ground_truth[indices] == sens_pred[indices]).sum()/len(indices)
-        performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], sens_pred[indices], metric=metric)
+        performance_by_subgroup_dict[kappa]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], sens_pred[indices], metric=metric)
 
     return pd.DataFrame.from_dict(performance_by_subgroup_dict, orient='index')
 
