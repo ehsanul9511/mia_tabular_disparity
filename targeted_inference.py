@@ -142,26 +142,20 @@ def get_subgroup_vals_sorted_by_risk(experiment, subgroup_col_name):
     return get_angular_difference_for_each_subgroup_val(experiment, subgroup_col_name)[['subgroup_val']].to_numpy().ravel()
 
 def single_attribute_based_targeted_ai(experiment, sens_pred, subgroup_col_name = 'occupation', kappas=[1, 0.5, 0.375, 0.25, 0.1, 0.05], metric='accuracy'):
-    occupation_vals_sorted = get_subgroup_vals_sorted_by_risk(experiment, subgroup_col_name=subgroup_col_name).tolist()
-    # print(occupation_vals_sorted)
+    subgroup_vals_sorted = get_subgroup_vals_sorted_by_risk(experiment, subgroup_col_name=subgroup_col_name).tolist()
 
     performance_by_subgroup_dict = {}
-    # sensitive_column_index = list(experiment.X_train.columns).index(f'{experiment.sensitive_column}_1')
-    conditions = [{subgroup_col_name: occupation_vals_sorted[:i+1]} for i in range(len(occupation_vals_sorted))]
+    conditions = [{subgroup_col_name: subgroup_vals_sorted[:i+1]} for i in range(len(subgroup_vals_sorted))]
     cumul_frac_of_total_records = [len(get_indices_by_group_condition(experiment.X_train, condition))/experiment.X_train.shape[0] for condition in conditions]
-    # return cumul_frac_of_total_records
     for kappa in kappas:
         j = np.argmin(np.abs(np.array(cumul_frac_of_total_records)-kappa))
-        condition = {subgroup_col_name: occupation_vals_sorted[:j+1]}
+        condition = {subgroup_col_name: subgroup_vals_sorted[:j+1]}
         fcondition = f'{condition}'
         performance_by_subgroup_dict[fcondition] = {}
         indices = get_indices_by_group_condition(experiment.X_train, condition)
-        # frac_of_total_records = len(indices)/experiment.X_train.shape[0]
         performance_by_subgroup_dict[kappa] = {}
-        # performance_by_subgroup_dict[frac_of_total_records]['attack_accuracy'] = (experiment.sens_val_ground_truth[indices] == sens_pred[indices]).sum()/len(indices)
         performance_by_subgroup_dict[kappa]['attack_accuracy'] = experiment.score(experiment.sens_val_ground_truth[indices], sens_pred[indices], metric=metric)
 
-    # print(condition)
 
     return pd.DataFrame.from_dict(performance_by_subgroup_dict, orient='index')
 
