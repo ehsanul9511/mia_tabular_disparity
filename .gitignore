@@ -1,4 +1,3 @@
-<PATH_TO_DATASET>/*
 <PATH_TO_MODEL>/*
 <PATH_TO_GRADS>/*
 .ipynb_checkpoints/*
