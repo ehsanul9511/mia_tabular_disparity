@@ -460,7 +460,6 @@ class CensusIncome:
         if not isinstance(m, list):
             m = [m] * len(subgroup_values)
             
-        # num_of_samples_dict_train = { i: {} for i in range(len(subgroup_values) }
         num_of_samples_dict_train = {}
         for i in range(len(subgroup_values)):
             num_of_samples_dict_train[i] = {}
@@ -469,7 +468,7 @@ class CensusIncome:
             num_of_samples_dict_train[i][(1, 1)] = n[i] // 2 - num_of_samples_dict_train[i][(0, 1)]
             num_of_samples_dict_train[i][(1, 0)] = n[i] // 2 - num_of_samples_dict_train[i][(0, 0)]
 
-        # print(num_of_samples_dict_train)
+        print(num_of_samples_dict_train)
         indices_dict = {}
         for i in tqdm(range(len(subgroup_values))):
             for j in [0, 1]:
@@ -484,11 +483,16 @@ class CensusIncome:
                         .index
                     )
                 except ValueError:
-                    print("Error in sampling")
-                    print(f"i: {i}, j: {j}")
-                    print(data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]])
-                    continue
-
+                    first_set_indices = data[data[y_col_name]==y_values[0]][data[sensitive_col_name]==sensitive_values[j]][data[subgroup_col_name]==subgroup_values[i]].sample(n=int(num_of_samples_dict_train[i][(0, j)]), replace=True, random_state=random_state).index
+                    
+                    second_set_indices = (
+                        data[(data[y_col_name] == y_values[1]) &
+                        (data[sensitive_col_name] == sensitive_values[j]) &
+                        (data[subgroup_col_name] == subgroup_values[i])]
+                        .sample(n=int(num_of_samples_dict_train[i][(1, j)]), replace=True, random_state=random_state)
+                        .index
+                    )
+                    
                 indices_dict[(i, j)] = first_set_indices.append(second_set_indices)
         
         indices = np.concatenate([indices_dict[(i, j)] for i in range(len(subgroup_values)) for j in [0, 1]])

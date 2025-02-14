@@ -50,12 +50,12 @@ def bcorr_sampling(experiment, X_train, y_tr, y_tr_onehot, subgroup_col_name, p=
     df = X_train.copy()
     df[y_column] = y_tr.ravel()
     subgroup_values = [col.split('_')[-1] for col in df.columns if col.startswith(subgroup_col_name)]
-    # x = df[df['SEX']==0][['MAR', 'PINCP']].value_counts().to_numpy().min()
-    # n = (x * 4) // (1 + p)
     n = [df[df[f"{subgroup_col_name}_{val}"]==1][[f'{sensitive_col_name}_{sensitive_positive}', y_column]].value_counts().to_numpy().min() * 4 for val in subgroup_values]
     p = [p] * len(subgroup_values)
 
-    sample_indices = experiment.ds.ds.sample_indices_matching_correlation(X_train, y_tr, p=p, n=n, subgroup_col_name='SEX', random_state=experiment.random_state)
+    print(n)
+
+    sample_indices = experiment.ds.ds.sample_indices_matching_correlation(X_train, y_tr, p=p, n=n, subgroup_col_name=subgroup_col_name, random_state=experiment.random_state)
 
     X_train_balanced_corr = X_train.loc[sample_indices].reset_index(drop=True)
     y_tr_balanced_corr = y_tr[sample_indices]
@@ -88,7 +88,6 @@ def evaluate(experiment, clf, X_train, y_tr, X_test, y_te, subgroup_col_name):
     correct_indices_LOMIA = (sens_pred_LOMIA == sens_val_ground_truth)
     
     num_of_subgroups = len(subgroup_oh_cols)
-    # return [correct_indices[subgroup_vals_te==i].mean() for i in range(51)]
     perf_dict = {
         'ASRD_CSMIA': round(100 * np.ptp([correct_indices[subgroup_vals_tr==i].mean() for i in range(num_of_subgroups)]), 2),
         'ASRD_LOMIA': round(100 * np.ptp([correct_indices_LOMIA[subgroup_vals_tr==i].mean() for i in range(num_of_subgroups)]), 2),
